@@ -2,18 +2,21 @@
 
 // 从 OpenCC 原始数据生成 src/engine/zh-convert-data.js（一次性工具，可重复运行）
 //
-// 数据源（Apache-2.0, https://github.com/BYVoid/OpenCC）:
-//   TSCharacters.txt  行格式: 繁\t简1 [简2 ...]   多候选时取第 1 个为默认
-//   TSPhrases.txt     行格式: 繁词\t简词1 [简词2 ...]
+// 数据源（Apache-2.0, https://github.com/BYVoid/OpenCC）全部放在 opencc 数据目录:
+//   TSCharacters.txt             繁→简 字符（主表; 多候选取第 1 个; 恒等跳过）
+//   TSPhrases.txt                繁→简 歧义词组（含恒等保护词组 如 乾坤→乾坤）
+//   CJK_Compatibility_Ideographs U+F900 兼容区→标准字（BIG5/GBK 转码残留）
+//   JPShinjitaiCharacters.txt    日文新字体→繁体（pixiv 机翻残留; 组合成 日文→简体）
+//   TWVariants.txt               台湾字形→标准繁体（组合成 直接→简体）
+//   HKVariants.txt               香港字形→标准繁体（组合成 直接→简体）
 //
 // 用法: node scripts/gen-zh-data.js [opencc数据目录]   (默认 tmp-opencc/)
 //
 // 规则:
 //   - 字符表: 键或值不是单个 UTF-16 单元、或低于 U+2E80 的行跳过
 //   - 恒等映射 (繁===简) 跳过 —— 歧义字默认保持原样, 由引擎层手工覆盖
-//     (著/祇/瞭 等小说高频字在 src/engine/zh-convert.js 的 EXTRA_CHARS 处理)
-//   - 词组表: 全部保留（含恒等词组, 如 乾坤→乾坤, 用于阻止字符层误转）
-//   - 单字词组折入字符表
+//   - 变体组合: variant → 标准繁体 → 经主表转简体; 仅在 variant 未被主表收录时新增
+//   - 词组表: 恒等词组保留（如 乾坤→乾坤, 阻止字符层误转）; 单字"词组"折入字符表
 
 const fs = require('fs');
 const path = require('path');
@@ -23,7 +26,9 @@ const SRC_DIR = process.argv[2] ? path.resolve(process.argv[2]) : path.join(ROOT
 const OUT = path.join(ROOT, 'src', 'engine', 'zh-convert-data.js');
 
 function parseDict(file) {
-  const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
+  const p = path.join(SRC_DIR, file);
+  if (!fs.existsSync(p)) { return []; }
+  const lines = fs.readFileSync(p, 'utf8').split(/\r?\n/);
   const out = [];
   for (const line of lines) {
     if (!line || line.startsWith('#')) continue;
@@ -39,8 +44,9 @@ function parseDict(file) {
 
 const isSingleBmp = (ch) => ch.length === 1 && ch.codePointAt(0) >= 0x2E80;
 
-const rawChars = parseDict(path.join(SRC_DIR, 'TSCharacters.txt'));
-const rawPhrases = parseDict(path.join(SRC_DIR, 'TSPhrases.txt'));
+// ── 第 1 层: 繁→简 主表 ──
+const rawChars = parseDict('TSCharacters.txt');
+const rawPhrases = parseDict('TSPhrases.txt');
 
 const chars = [];
 const charSeen = new Set();
@@ -55,7 +61,43 @@ for (const [t, s] of rawChars) {
   chars.push(t + s);
 }
 
-// 单字"词组"折入字符表; 其余保留
+// 主表 Map（供变体组合查询用）
+const mainMap = new Map();
+for (const pair of chars) { mainMap.set(pair[0], pair[1]); }
+const viaMain = (ch) => {
+  // 逐字过主表; 未收录的字保持原样（视为已是简体同形）
+  if (mainMap.has(ch)) { return mainMap.get(ch); }
+  return ch;
+};
+
+// ── 第 2 层: 变体字组合（CJK 兼容区 / 日文新字体 / 台港字形）──
+const VARIANT_SOURCES = [
+  'CJK_Compatibility_Ideographs.txt',
+  'JPShinjitaiCharacters.txt',
+  'TWVariants.txt',
+  'HKVariants.txt',
+];
+const variantCounts = {};
+let variantAdded = 0;
+for (const src of VARIANT_SOURCES) {
+  variantCounts[src] = 0;
+  for (const [variant, target] of parseDict(src)) {
+    if (!isSingleBmp(variant) || ![...target].every(isSingleBmp)) continue;
+    if (variant === target) continue;
+    // 已被主表收录的不动（主表优先）
+    if (charSeen.has(variant)) continue;
+    // 组合: 变体 → 标准繁体 → 简体
+    const simplified = [...target].map(viaMain).join('');
+    if (variant === simplified) continue;
+    if (simplified.length !== 1) continue; // 只收单字→单字
+    charSeen.add(variant);
+    chars.push(variant + simplified);
+    variantCounts[src]++;
+    variantAdded++;
+  }
+}
+
+// ── 第 3 层: 词组（单字"词组"折入字符表）──
 const phrases = [];
 const phraseSeen = new Set();
 let foldedSingle = 0;
@@ -80,7 +122,7 @@ lines.push('');
 lines.push('// 繁→简 数据表 —— 由 scripts/gen-zh-data.js 生成, 请勿手工编辑');
 lines.push('// 数据源: OpenCC (https://github.com/BYVoid/OpenCC), Apache-2.0');
 lines.push('// 生成时间: ' + new Date().toISOString().slice(0, 10));
-lines.push('// 字符 ' + chars.length + ' 对 (多候选歧义字默认保持原样, 引擎层另行覆盖)');
+lines.push('// 字符 ' + chars.length + ' 对 (繁→简主表 + 变体组合; 多候选歧义字默认保持原样, 引擎层另行覆盖)');
 lines.push('// 词组 ' + phrases.length + ' 条 (含恒等词组如 乾坤→乾坤, 阻止字符层误转)');
 lines.push('');
 lines.push('const CHARS = [');
@@ -100,7 +142,11 @@ lines.push('');
 
 fs.writeFileSync(OUT, lines.join('\n'), 'utf8');
 
-console.log('字符对:', chars.length, '(原始 ' + rawChars.length + ', 恒等跳过 ' + skippedIdentity +
-  ', 非BMP跳过 ' + skippedNonBmp + ', 单字词组折入 ' + foldedSingle + ')');
+console.log('字符对:', chars.length,
+  '(TS主表', (chars.length - variantAdded - foldedSingle) +
+  ', 恒等跳过 ' + skippedIdentity + ', 非BMP跳过 ' + skippedNonBmp + ')');
+console.log('变体组合新增', variantAdded, ':',
+  VARIANT_SOURCES.map((s) => s.replace('.txt', '') + ' +' + variantCounts[s]).join(' '));
+console.log('单字词组折入:', foldedSingle);
 console.log('词组:', phrases.length, '(原始 ' + rawPhrases.length + ')');
 console.log('写出:', path.relative(ROOT, OUT));
