@@ -1,0 +1,416 @@
+{
+  "name": "novel-toolkit",
+  "displayName": "小说工具箱 Novel Toolkit",
+  "description": "网文整理一条龙：贴左检查+定位、合并段内换行、去缩进、章节名跳转/列表、批量添加首行缩进、批量整理/转码、cool18/Pixiv 抓取。检查只读不改；整理类命令仅手动触发。",
+  "version": "0.16.0",
+  "publisher": "localtools",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ElmaTony/novel-toolkit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ElmaTony/novel-toolkit/issues"
+  },
+  "engines": {
+    "vscode": "^1.70.0"
+  },
+  "scripts": {
+    "test": "node test/run-all.js",
+    "update": "node scripts/update.js"
+  },
+  "categories": [
+    "Other",
+    "Formatters",
+    "Linters"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "novelToolkit.check",
+        "title": "小说工具箱: 检查当前文件（行首空白）"
+      },
+      {
+        "command": "novelToolkit.nextProblem",
+        "title": "小说工具箱: 跳到下一处行首空白"
+      },
+      {
+        "command": "novelToolkit.prevProblem",
+        "title": "小说工具箱: 跳到上一处行首空白"
+      },
+      {
+        "command": "novelToolkit.merge",
+        "title": "小说工具箱: 合并段落内换行（当前文件）"
+      },
+      {
+        "command": "novelToolkit.dedent",
+        "title": "小说工具箱: 去除所有行首缩进（当前文件）"
+      },
+      {
+        "command": "novelToolkit.nextChapter",
+        "title": "小说工具箱: 跳到下一章"
+      },
+      {
+        "command": "novelToolkit.prevChapter",
+        "title": "小说工具箱: 跳到上一章"
+      },
+      {
+        "command": "novelToolkit.chapterList",
+        "title": "小说工具箱: 章节列表（点击跳转）"
+      },
+      {
+        "command": "novelToolkit.indent",
+        "title": "小说工具箱: 批量添加首行缩进（当前文件）"
+      },
+      {
+        "command": "novelToolkit.removeBlankLines",
+        "title": "小说工具箱: 消除空白行（当前文件）"
+      },
+      {
+        "command": "novelToolkit.blankBeforeChapters",
+        "title": "小说工具箱: 章节名前插入空行（首个章节除外）"
+      },
+      {
+        "command": "novelToolkit.unifyChapterNumbers",
+        "title": "小说工具箱: 章节号统一（阿拉伯数字 → 汉字）"
+      },
+      {
+        "command": "novelToolkit.nextShort",
+        "title": "小说工具箱: 跳到下一处标点短行"
+      },
+      {
+        "command": "novelToolkit.prevShort",
+        "title": "小说工具箱: 跳到上一处标点短行"
+      },
+      {
+        "command": "novelToolkit.nextQuote",
+        "title": "小说工具箱: 跳到下一处引号配对问题"
+      },
+      {
+        "command": "novelToolkit.prevQuote",
+        "title": "小说工具箱: 跳到上一处引号配对问题"
+      },
+      {
+        "command": "novelToolkit.cool18Search",
+        "title": "小说工具箱: cool18 搜索（输入关键词，结果可多选抓取）"
+      },
+      {
+        "command": "novelToolkit.panel",
+        "title": "小说工具箱: 打开工具面板（功能按钮 + 章节列表）"
+      },
+      {
+        "command": "novelToolkit.setupEncoding",
+        "title": "小说工具箱: 一键启用中文编码自动识别（GB2312/GBK/GB18030/Big5）"
+      },
+      {
+        "command": "novelToolkit.detectEncoding",
+        "title": "小说工具箱: 检测当前文件编码"
+      },
+      {
+        "command": "novelToolkit.convertToUtf8",
+        "title": "小说工具箱: 当前文件转码为 UTF-8"
+      },
+      {
+        "command": "novelToolkit.cool18Grab",
+        "title": "小说工具箱: cool18 抓取（粘贴链接/ID，单链接自动爬全本）"
+      },
+      {
+        "command": "novelToolkit.cool18GrabFile",
+        "title": "小说工具箱: cool18 抓取本文件全部链接"
+      },
+      {
+        "command": "novelToolkit.cool18OpenOutput",
+        "title": "小说工具箱: cool18 打开输出目录"
+      },
+      {
+        "command": "novelToolkit.pixivGrab",
+        "title": "小说工具箱: Pixiv 抓取链接（单篇/系列/作者）"
+      },
+      {
+        "command": "novelToolkit.pixivGrabFile",
+        "title": "小说工具箱: Pixiv 抓取本文件全部链接"
+      },
+      {
+        "command": "novelToolkit.pixivGrabUser",
+        "title": "小说工具箱: Pixiv 抓取作者全部小说"
+      },
+      {
+        "command": "novelToolkit.pixivUpdate",
+        "title": "小说工具箱: Pixiv 增量更新已抓系列"
+      },
+      {
+        "command": "novelToolkit.pixivSetCookie",
+        "title": "小说工具箱: Pixiv 设置/更新 Cookie"
+      },
+      {
+        "command": "novelToolkit.pixivOpenOutput",
+        "title": "小说工具箱: Pixiv 打开输出目录"
+      },
+      {
+        "command": "novelToolkit.scrapeCancel",
+        "title": "小说工具箱: 取消当前抓取任务"
+      },
+      {
+        "command": "novelToolkit.showScrapeLog",
+        "title": "小说工具箱: 显示抓取运行日志"
+      },
+      {
+        "command": "novelToolkit.renameFile",
+        "title": "小说工具箱: 重命名当前文件"
+      },
+      {
+        "command": "novelToolkit.batchProcess",
+        "title": "小说工具箱: 批量整理文件夹（合并换行→贴左→缩进）"
+      },
+      {
+        "command": "novelToolkit.batchConvert",
+        "title": "小说工具箱: 批量转码文件夹为 UTF-8"
+      },
+      {
+        "command": "novelToolkit.showHistory",
+        "title": "小说工具箱: 查看抓取历史"
+      },
+      {
+        "command": "novelToolkit.t2sFile",
+        "title": "小说工具箱: 繁体转简体（当前文件）"
+      },
+      {
+        "command": "novelToolkit.normalizeEllipsis",
+        "title": "小说工具箱: 省略号整改（当前文件）"
+      },
+      {
+        "command": "novelToolkit.replaceCornerQuotes",
+        "title": "小说工具箱: 直角引号换弯引号（「」→ “”）（当前文件）"
+      },
+      {
+        "command": "novelToolkit.fullwidthToHalfwidth",
+        "title": "小说工具箱: 全角字符转半角（Ｓｏｒｒｙ → Sorry）（当前文件）"
+      },
+      {
+        "command": "novelToolkit.checkChapters",
+        "title": "小说工具箱: 章节缺失检查（当前文件）"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "novelToolkit.nextProblem",
+        "key": "alt+f8",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "novelToolkit.prevProblem",
+        "key": "shift+alt+f8",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "novelToolkit.nextChapter",
+        "key": "alt+f9",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "novelToolkit.prevChapter",
+        "key": "shift+alt+f9",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "novelToolkit.nextShort",
+        "key": "alt+f7",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "novelToolkit.prevShort",
+        "key": "shift+alt+f7",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "novelToolkit.panel",
+        "key": "alt+f10",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "novelToolkit.panel",
+        "key": "alt+f11"
+      }
+    ],
+    "configuration": {
+      "title": "小说工具箱",
+      "properties": {
+        "novelToolkit.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "自动检查打开/编辑的文件中行首是否有空白"
+        },
+        "novelToolkit.ignoreBlankLines": {
+          "type": "boolean",
+          "default": true,
+          "description": "贴左检查忽略只有空白字符的空行"
+        },
+        "novelToolkit.excludedLanguages": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "不检查的语言 ID 列表，例如 [\"python\", \"yaml\"]"
+        },
+        "novelToolkit.silenceAfterSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "保存后清空警告并停止自动检查，直到手动按 Alt+F8 或运行检查命令"
+        },
+        "novelToolkit.shortLineCheck": {
+          "type": "boolean",
+          "default": true,
+          "description": "检查疑似合并残留的标点短行（如单独成行的句号）"
+        },
+        "novelToolkit.shortLineMaxChars": {
+          "type": "number",
+          "default": 2,
+          "description": "标点短行判定的最大字符数（默认 2；更长的符号行视为分隔线，不报）"
+        },
+        "novelToolkit.quotePairCheck": {
+          "type": "boolean",
+          "default": true,
+          "description": "检查引号配对（「」『』“”‘’ 在行内开合数量应相等；合并后使用最准）"
+        },
+        "novelToolkit.indentStartsParagraph": {
+          "type": "boolean",
+          "default": true,
+          "description": "合并换行时，把行首有缩进的行视为新段落的开头"
+        },
+        "novelToolkit.smartParagraphs": {
+          "type": "boolean",
+          "default": true,
+          "description": "智能合并：当源文件几乎每行都有缩进时，改用句末标点/对话引号判断段落起点，避免整本被合并成一段或每行都成段"
+        },
+        "novelToolkit.keepBlankLines": {
+          "type": "boolean",
+          "default": true,
+          "description": "合并换行时保留段落之间的空行；改为 false 则删除空行"
+        },
+        "novelToolkit.indentString": {
+          "type": "string",
+          "default": "　　",
+          "description": "批量缩进使用的前缀（默认两个全角空格）"
+        },
+        "novelToolkit.indentSkipChapterTitles": {
+          "type": "boolean",
+          "default": false,
+          "description": "批量缩进时跳过章节名行（保持章节名贴左）"
+        },
+        "novelToolkit.indentNormalizeExisting": {
+          "type": "boolean",
+          "default": true,
+          "description": "批量缩进时把已有但不一致的缩进（如 4 个半角空格、单个全角空格）统一成设定的缩进字符串"
+        },
+        "novelToolkit.chapterPattern": {
+          "type": "string",
+          "default": "",
+          "description": "章节名识别正则（对每一行做测试）。留空使用内置智能识别：支持中文章节号、卷名、序章/番外、Chapter N、标题内 ！？… 等标点，并用上下文兜底识别中等长度标题；如需严格自定义可填入自己的正则"
+        },
+        "novelToolkit.batchBackup": {
+          "type": "boolean",
+          "default": true,
+          "description": "批量整理/转码时先备份原文件为 .bak（推荐开启）"
+        },
+        "novelToolkit.cool18OutputRoot": {
+          "type": "string",
+          "default": "",
+          "description": "cool18 输出根目录（每本书一个子文件夹；只新建文件，绝不覆盖/删除既有文件）。留空默认使用 ~/Novels/cool18"
+        },
+        "novelToolkit.cool18Proxy": {
+          "type": "string",
+          "default": "http://127.0.0.1:7897",
+          "description": "cool18 抓取使用的 HTTP 代理（cool18 在本机一般需走代理；留空=直连）"
+        },
+        "novelToolkit.cool18Delay": {
+          "type": "number",
+          "default": 1.0,
+          "minimum": 0,
+          "description": "cool18 相邻请求间隔秒数（实际会 ±20% 抖动；默认 1.0 秒）"
+        },
+        "novelToolkit.cool18MaxPages": {
+          "type": "number",
+          "default": 300,
+          "minimum": 1,
+          "description": "cool18 爬全本时最多抓多少帖（防失控）"
+        },
+        "novelToolkit.cool18MaxRetries": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "maximum": 10,
+          "description": "cool18 单页请求的最大尝试次数（指数退避 1s/2s/4s…；失败页还会额外排队重试两轮）"
+        },
+        "novelToolkit.scrapeCleanAds": {
+          "type": "boolean",
+          "default": true,
+          "description": "抓取时清理明确的站点广告/签名行（保守策略：含句读的正文行保留；删除内容写入抓取日志）"
+        },
+        "novelToolkit.pixivOutputRoot": {
+          "type": "string",
+          "default": "",
+          "description": "Pixiv 输出根目录（沿用旧插件 pixivNovel.outputRoot 的配置可自动兜底；manifest 沿用，已抓记录无缝衔接）。留空默认使用 ~/Novels/pixiv"
+        },
+        "novelToolkit.pixivCookie": {
+          "type": "string",
+          "default": "",
+          "description": "PHPSESSID 值或整段 Cookie（推荐用命令「设置/更新 Cookie」存到 VSCode 私密存储，此处仅作兜底）"
+        },
+        "novelToolkit.pixivProxy": {
+          "type": "string",
+          "default": "http://127.0.0.1:7897",
+          "description": "Pixiv 抓取的 HTTP 代理（pixiv.net 在国内需走代理；默认使用本机 7897 端口）"
+        },
+        "novelToolkit.pixivIntervalMs": {
+          "type": "number",
+          "default": 1200,
+          "minimum": 200,
+          "description": "Pixiv 相邻请求的起步间隔毫秒数（±30% 抖动）"
+        },
+        "novelToolkit.pixivConcurrency": {
+          "type": "number",
+          "default": 1,
+          "minimum": 1,
+          "maximum": 3,
+          "description": "Pixiv 并发数（默认 1 串行最稳；作者全量可开 2-3）"
+        },
+        "novelToolkit.pixivMaxRetries": {
+          "type": "number",
+          "default": 3,
+          "minimum": 0,
+          "description": "Pixiv 网络错误/限速的最大重试次数"
+        },
+        "novelToolkit.pixivPageSeparator": {
+          "type": "string",
+          "default": "",
+          "description": "Pixiv [newpage] 处插入的分隔线（留空=只留空行）"
+        },
+        "novelToolkit.pixivRubyKeep": {
+          "type": "boolean",
+          "default": false,
+          "description": "Pixiv 注音标记 [[rb:本字>注音]] 是否保留注音"
+        },
+        "novelToolkit.pixivSaveUrlNote": {
+          "type": "boolean",
+          "default": true,
+          "description": "Pixiv 每本/每系列写一个只含原始链接的「（链接）.txt」"
+        },
+        "novelToolkit.pixivSaveMeta": {
+          "type": "boolean",
+          "default": false,
+          "description": "Pixiv 额外写 .meta.json 元数据旁车（txt 内不写头部）"
+        },
+        "novelToolkit.pixivRawCache": {
+          "type": "boolean",
+          "default": false,
+          "description": "保存 Pixiv ajax 原始 JSON 到插件存储区（供日后离线重解析）"
+        }
+      }
+    }
+  }
+}

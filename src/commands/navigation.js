@@ -1,0 +1,140 @@
+'use strict';
+
+// 检查与跳转命令：全文检查、空白/短行/引号/章节跳转、章节列表
+const vscode = require('vscode');
+const chapters = require('../engine/chapters');
+const { docLines, jumpToLine, noDoc } = require('../core/editor');
+
+function registerNavigationCommands({ reg, panel, checker, cfg }) {
+  reg('check', () => {
+    const editor = panel.editor();
+    if (!editor) {
+      return noDoc();
+    }
+    const r = checker.fullScan(editor.document);
+    if (!r) {
+      return vscode.window.showInformationMessage('当前文件类型已排除检查');
+    }
+    if (r.ws.length === 0 && r.short.length === 0 && r.quote.length === 0) {
+      return vscode.window.showInformationMessage('已扫描全文：所有行都已贴最左侧，也没有引号配对问题 ✓');
+    }
+    if (r.ws.length > 0) {
+      jumpToLine(editor, r.ws, r.ws[0]);
+    } else if (r.quote.length > 0) {
+      jumpToLine(editor, r.quote, r.quote[0], '引号配对');
+    } else {
+      jumpToLine(editor, r.short, r.short[0], '残留短行');
+    }
+    vscode.window.showInformationMessage(
+      '已扫描全文：' + r.ws.length + ' 处行首空白、' + r.short.length + ' 处疑似标点短行、' +
+      r.quote.length + ' 处引号疑似不配对；Alt+F8 / Alt+F7 逐个跳转'
+    );
+  });
+
+  const makeJump = (key, label, emptyMsg, backwards) => () => {
+    const editor = panel.editor();
+    if (!editor) {
+      return;
+    }
+    const r = checker.fullScan(editor.document);
+    if (!r) {
+      return;
+    }
+    const lines = r[key];
+    if (lines.length === 0) {
+      vscode.window.setStatusBarMessage(emptyMsg, 4000);
+      return;
+    }
+    const cursor = editor.selection.active.line;
+    let target;
+    if (backwards) {
+      target = undefined;
+      for (const i of lines) {
+        if (i < cursor) {
+          target = i;
+        }
+      }
+      if (target === undefined) {
+        target = lines[lines.length - 1];
+      }
+    } else {
+      target = lines.find((i) => i > cursor);
+      if (target === undefined) {
+        target = lines[0];
+      }
+    }
+    jumpToLine(editor, lines, target, label);
+  };
+
+  reg('nextProblem', makeJump('ws', '行首空白', '全文没有行首空白 ✓', false));
+  reg('prevProblem', makeJump('ws', '行首空白', '全文没有行首空白 ✓', true));
+  reg('nextShort', makeJump('short', '残留短行', '全文没有标点短行 ✓', false));
+  reg('prevShort', makeJump('short', '残留短行', '全文没有标点短行 ✓', true));
+  reg('nextQuote', makeJump('quote', '引号配对', '全文没有引号配对问题 ✓', false));
+  reg('prevQuote', makeJump('quote', '引号配对', '全文没有引号配对问题 ✓', true));
+
+  const chapterJump = (backwards) => () => {
+    const editor = panel.editor();
+    if (!editor) {
+      return;
+    }
+    const lines = chapters.chapterLines(docLines(editor.document), cfg().get('chapterPattern'));
+    if (lines.length === 0) {
+      vscode.window.setStatusBarMessage('未识别到章节名（可调整 novelToolkit.chapterPattern）', 4000);
+      return;
+    }
+    const cursor = editor.selection.active.line;
+    let target;
+    if (backwards) {
+      target = undefined;
+      for (const i of lines) {
+        if (i < cursor) {
+          target = i;
+        }
+      }
+      if (target === undefined) {
+        target = lines[lines.length - 1];
+      }
+    } else {
+      target = lines.find((i) => i > cursor);
+      if (target === undefined) {
+        target = lines[0];
+      }
+    }
+    const start = new vscode.Position(target, 0);
+    editor.revealRange(new vscode.Range(start, start), vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+    editor.selection = new vscode.Selection(start, start);
+    const title = editor.document.lineAt(target).text.trim().slice(0, 30);
+    vscode.window.setStatusBarMessage(
+      '章节 ' + (lines.indexOf(target) + 1) + ' / ' + lines.length + '：' + title, 5000
+    );
+  };
+
+  reg('nextChapter', chapterJump(false));
+  reg('prevChapter', chapterJump(true));
+
+  reg('chapterList', async () => {
+    const editor = panel.editor();
+    if (!editor) {
+      return noDoc();
+    }
+    const doc = editor.document;
+    const entries = chapters.chapterEntries(docLines(doc), cfg().get('chapterPattern'));
+    if (entries.length === 0) {
+      return vscode.window.showInformationMessage('未识别到章节名（可调整设置里的 novelToolkit.chapterPattern）');
+    }
+    const items = entries.map((e) => ({
+      label: (e.kind === 'volume' ? '▍[卷] ' : '') + e.title.slice(0, 60),
+      description: '第 ' + (e.line + 1) + ' 行',
+      line: e.line
+    }));
+    const pick = await vscode.window.showQuickPick(items, {
+      placeHolder: '共 ' + items.length + ' 项（含卷），选择后跳转'
+    });
+    if (pick) {
+      panel.jump(pick.line);
+    }
+  });
+}
+
+module.exports = { registerNavigationCommands };
