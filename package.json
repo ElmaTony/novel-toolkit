@@ -2,7 +2,7 @@
   "name": "novel-toolkit",
   "displayName": "小说工具箱 Novel Toolkit",
   "description": "网文整理一条龙：贴左检查+定位、合并段内换行、去缩进、章节名跳转/列表、批量添加首行缩进、批量整理/转码、cool18/Pixiv 抓取。检查只读不改；整理类命令仅手动触发。",
-  "version": "0.16.0",
+  "version": "0.16.1",
   "publisher": "localtools",
   "license": "MIT",
   "repository": {
