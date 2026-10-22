@@ -30,6 +30,10 @@ const EXTRA_CHARS = [
   '倐倏', // 异体字, OpenCC 未收
   // OpenCC 未收的变体字（原手工表遗留, 实测出现于网文）
   '妳你', '牠它', '姪侄', '錬炼', '徚悚', '覇霸', '槪概', '汚污',
+  // 台湾正字/异体字（OpenCC 以"台湾标准字形"为由不收; 简体输出需要转换）
+  // 来源: OpenCC STCharacters 反查漏网（繁体候选未被 TS 收录且非 GB2312 简体目标）
+  '暱昵', '菓果', '鎗枪', '燄焰', '瑯琅', '揹背', '甦苏',
+  '籐藤', '荳豆', '隄堤', '拏拿', '斲斫', '蘗檗', '濬浚',
 ];
 
 // ── 手工补充词组 ──
@@ -56,6 +60,9 @@ const EXTRA_PHRASES = [
   ['瞭哨', '瞭哨'],
   ['哪吒', '哪吒'],           // 吒→咤 会误伤"哪吒"
   ['乾清宫', '乾清宫'], ['乾陵', '乾陵'], // 乾→干 的简体专名
+  ['乾嘉', '乾嘉'], ['乾道', '乾道'],     // 年号保留乾
+  ['文徵明', '文徵明'],                   // 明代画家, 人名保留徵
+  ['宮商角徵羽', '宫商角徵羽'],           // 五音之徵(zhǐ) 保留
 ];
 
 // ── 字符表 ──
@@ -125,4 +132,37 @@ function t2sDetail(text) {
   return { output: result, changes };
 }
 
-module.exports = { t2s, t2sDetail, T2S, PAIRS: [...CHARS, ...EXTRA_CHARS] };
+// 转换清单聚合器（纯函数, 可单测）:
+//   恒等命中（from === to, 词组保护）不计入替换总数, 单独归入 protected
+//   result(): { totalChanges, changedLines, real: [{from,to,count,lines}], protected: [...] }
+function createChangeSummary() {
+  const real = new Map();
+  const prot = new Map();
+  return {
+    add(changes, lineNo) {
+      for (const c of changes) {
+        const bucket = c.from === c.to ? prot : real;
+        const key = c.from + '\t' + c.to;
+        let e = bucket.get(key);
+        if (!e) { e = { from: c.from, to: c.to, count: 0, lines: [] }; bucket.set(key, e); }
+        e.count++;
+        if (e.lines[e.lines.length - 1] !== lineNo) { e.lines.push(lineNo); }
+      }
+    },
+    result() {
+      const realArr = [...real.values()];
+      const protArr = [...prot.values()];
+      const lineSet = new Set();
+      for (const e of realArr) { for (const n of e.lines) { lineSet.add(n); } }
+      return {
+        totalChanges: realArr.reduce((s, e) => s + e.count, 0),
+        changedLines: lineSet.size,
+        real: realArr,
+        protected: protArr,
+        protectedTotal: protArr.reduce((s, e) => s + e.count, 0),
+      };
+    },
+  };
+}
+
+module.exports = { t2s, t2sDetail, createChangeSummary, T2S, PAIRS: [...CHARS, ...EXTRA_CHARS] };

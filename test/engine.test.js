@@ -327,6 +327,34 @@ eq(zh.t2s('翻页叙述'), '翻页叙述', '简体保护: 翻');
   }
   eq(bad.length, 0, 'GB2312 幂等: 6763 简体字零误伤' + (bad.length ? '，漏网: ' + bad.slice(0, 10).join(' ') : ''));
 }
+// v0.16.4 词库扩充批次（STCharacters 反查漏网: OpenCC 不收的台湾正字/异体字）
+eq(zh.t2s('親暱'), '亲昵', '繁转简: 暱→昵（异体）');
+eq(zh.t2s('菓子'), '果子', '繁转简: 菓→果（台湾正字）');
+eq(zh.t2s('鎗法'), '枪法', '繁转简: 鎗→枪');
+eq(zh.t2s('火燄'), '火焰', '繁转简: 燄→焰');
+eq(zh.t2s('琳瑯'), '琳琅', '繁转简: 瑯→琅');
+eq(zh.t2s('揹著包'), '背着包', '繁转简: 揹→背');
+eq(zh.t2s('甦醒'), '苏醒', '繁转简: 甦→苏');
+eq(zh.t2s('籐椅'), '藤椅', '繁转简: 籐→藤');
+eq(zh.t2s('荳蔻'), '豆蔻', '繁转简: 荳→豆');
+eq(zh.t2s('河隄'), '河堤', '繁转简: 隄→堤');
+eq(zh.t2s('拏人'), '拿人', '繁转简: 拏→拿');
+eq(zh.t2s('斲樹'), '斫树', '繁转简: 斲→斫');
+eq(zh.t2s('乾嘉學派'), '乾嘉学派', '繁转简: 乾嘉保留（年号）+ 學→学');
+eq(zh.t2s('文徵明'), '文徵明', '繁转简: 文徵明保留（人名）');
+eq(zh.t2s('宮商角徵羽'), '宫商角徵羽', '繁转简: 徵(zhǐ)保留，宮→宫');
+// createChangeSummary: 恒等词组保护不计入替换总数
+{
+  const s = zh.createChangeSummary();
+  s.add(zh.t2sDetail('看著書，著作').changes, 1);
+  s.add(zh.t2sDetail('合著').changes, 2);
+  const r = s.result();
+  eq(r.totalChanges, 2, 'summarize: 恒等保护不计入替换总数');
+  eq(r.protectedTotal, 2, 'summarize: 保护命中单列计数');
+  eq(r.changedLines, 1, 'summarize: 纯保护行不算变化行');
+  eq(r.real.some((e) => e.from === '著' && e.to === '着'), true, 'summarize: 真实替换含 著→着');
+  eq(r.protected.some((e) => e.from === '著作'), true, 'summarize: 保护含 著作');
+}
 // v0.16.2 变体字扩充批次
 eq(zh.t2s('侏儸紀'), '侏罗纪', '繁转简: 儸→罗（覆盖 OpenCC 的㑩，侏罗纪场景）');
 eq(zh.t2s('倐地'), '倏地', '繁转简: 倐→倏（异体字）');
