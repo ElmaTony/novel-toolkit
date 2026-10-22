@@ -1,13 +1,17 @@
 # 小说工具箱 Novel Toolkit
 
 网文一站式工具箱：**贴左/短行检查**、**排版整理**、**章节导航**，以及内置的
-**cool18 禁忌书屋抓取**与 **Pixiv 小说抓取**（由原独立插件合并而来）。
+<abbr title="cool18 禁忌书屋抓取 与 Pixiv 小说抓取，由原独立插件合并而来">**两种小说在线抓取**（悬停查看来源）</abbr>。
 检查只读不改；整理类命令与抓取仅在主动触发时运行，整理均可 Ctrl+Z 撤销。
 
 ## 安装
 
-整个文件夹放到 `%USERPROFILE%\.vscode\extensions\localtools.novel-toolkit-0.1.0`
-（已自动复制）。执行 `Developer: Reload Window` 生效。
+从 [Releases](https://github.com/ElmaTony/novel-toolkit/releases) 下载 vsix
+（通用包即可，Windows / macOS / Linux 通用），然后在 VSCode 中执行
+`Extensions: Install from VSIX...` 选择文件，或直接拖入扩展面板。
+安装后执行 `Developer: Reload Window` 生效。
+
+开发自装：仓库根目录运行 `npm run update`（自动打包最新版并安装）。
 
 ## 工具面板（Alt+F10 或状态栏 📖 工具箱）
 
@@ -23,13 +27,13 @@
 - 章节列表：搜索过滤、当前章自动高亮、定位当前章、点击跳转。
 
 **📥 抓取** —— 两个来源：
-- **cool18 · 禁忌书屋**：贴帖子链接/ID 爬全本 <abbr title="粘贴帖子链接/ID（每行一个）→ 爬全本（跟随帖内章节链接，按章节区间排序）或按列表顺序批量；每本书输出到 cool18OutputRoot/<书名>/（NNN_标题.txt + 合集.txt，UTF-8 BOM+CRLF）">（悬停查看详情）</abbr>
+- <abbr title="cool18 · 禁忌书屋：粘贴帖子链接/ID（每行一个）→ 爬全本（跟随帖内章节链接，按章节区间排序）或按列表顺序批量；每本书输出到 cool18OutputRoot/<书名>/（NNN_标题.txt + 合集.txt，UTF-8 BOM+CRLF）">**小说站抓取**：贴帖子链接/ID 爬全本（悬停查看来源与详情）</abbr>
 - **Pixiv 小说**：粘贴小说/系列/作者链接或裸 ID → 单篇/系列/作者全量抓取，
   增量更新已抓系列（manifest 沿用旧插件数据，已抓记录无缝衔接）；
   已抓系列清单直接显示在面板里。
 
 底部任务条实时显示抓取进度，进行中可点"取消"；
-<abbr title="cool18 走代理抓取，默认 http://127.0.0.1:7897，可配置">cool18 代理设置悬停查看</abbr>，Pixiv 默认直连（可配代理）。
+<abbr title="cool18 走代理抓取，默认 http://127.0.0.1:7897，可配置">小说站抓取走代理（悬停查看）</abbr>，Pixiv 默认直连（可配代理）。
 
 ## 处理一本网文的标准流程
 
@@ -59,7 +63,7 @@
 `indentSkipChapterTitles` / `indentNormalizeExisting` / `chapterPattern`
 （`chapterPattern` 留空 = 内置智能识别，支持中等长度、标题内 `！？…` 与上下文兜底）
 
-cool18 抓取：<abbr title="留空默认 ~/Novels/cool18">`cool18OutputRoot`</abbr>、
+抓取一：<abbr title="cool18OutputRoot：留空默认 ~/Novels/cool18">`cool18OutputRoot`</abbr>、
 <abbr title="默认 http://127.0.0.1:7897">`cool18Proxy`</abbr>、
 <abbr title="默认 1.0s，±20% 抖动">`cool18Delay`</abbr>、
 <abbr title="300">`cool18MaxPages`</abbr>、
@@ -72,15 +76,8 @@ Pixiv 抓取：`pixivOutputRoot`（留空默认 `~/Novels/pixiv`）、
 `pixivMaxRetries`、`pixivPageSeparator`、`pixivRubyKeep`、`pixivSaveUrlNote`、
 `pixivSaveMeta`、`pixivRawCache`
 
-旧插件配置兼容：`pixivNovel.*` 和 `cool18Novel.*` 里已设置的值会自动兜底生效。
+<abbr title="pixivNovel.* 和 cool18Novel.* 里已设置的值会自动兜底生效">旧插件配置兼容（悬停查看）</abbr>。
 
-## 从旧插件迁移
-
-- **Pixiv小说扒取 → novelToolkit**：输出目录与 manifest 完全沿用（已抓系列
-  的增量更新直接可用）；唯一变化是 Cookie 存储位置改为 VSCode 私密存储，
-  **首次使用需重新粘贴一次 Cookie**（旧配置里明文存的 cookie 仍会被读取）；
-- **cool18小说扒取 → novelToolkit**：原 Python 引擎重写为纯 JS <abbr title="逻辑一致（元信息保留、段内硬换行合并、章节区间排序、合集.txt），不再依赖 Python">（悬停查看迁移细节）</abbr>；
-- 两个旧插件已从扩展目录移除。
 
 ## 源码结构
 
