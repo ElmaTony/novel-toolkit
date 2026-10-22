@@ -2,7 +2,10 @@
 
 // 从 OpenCC 原始数据生成 src/engine/zh-convert-data.js（一次性工具，可重复运行）
 //
-// 数据源（Apache-2.0, https://github.com/BYVoid/OpenCC）全部放在 opencc 数据目录:
+// 用法: node scripts/gen-zh-data.js [opencc数据目录]   (默认 tmp-opencc/)
+// 数据源准备（Apache-2.0, https://github.com/BYVoid/OpenCC）, 缺失时先下载到 tmp-opencc/:
+//   TSCharacters.txt  TSPhrases.txt  CJK_Compatibility_Ideographs.txt  JPShinjitaiCharacters.txt
+//   例如: curl -sL -o tmp-opencc/<文件名> "https://cdn.jsdelivr.net/gh/BYVoid/OpenCC@master/data/dictionary/<文件名>"
 //   TSCharacters.txt             繁→简 字符（主表; 多候选取第 1 个; 恒等跳过）
 //   TSPhrases.txt                繁→简 歧义词组（含恒等保护词组 如 乾坤→乾坤）
 //   CJK_Compatibility_Ideographs U+F900 兼容区→标准字（BIG5/GBK 转码残留）
