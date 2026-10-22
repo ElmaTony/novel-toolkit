@@ -1,6 +1,7 @@
 # 小说工具箱 Novel Toolkit
 
-网文一站式工具箱：**贴左/短行检查**、**排版整理**、**章节导航**，以及内置的**两种小说在线抓取**。
+网文一站式工具箱：**贴左/短行检查**、**排版整理**、**章节导航**，以及内置的
+**cool18 禁忌书屋抓取**与 **Pixiv 小说抓取**（由原独立插件合并而来）。
 检查只读不改；整理类命令与抓取仅在主动触发时运行，整理均可 Ctrl+Z 撤销。
 
 ## 安装
@@ -26,22 +27,15 @@
 - 章节列表：搜索过滤、当前章自动高亮、定位当前章、点击跳转。
 
 **📥 抓取** —— 两个来源：
+- **cool18 · 禁忌书屋**：粘贴帖子链接/ID（每行一个）→ 爬全本（跟随帖内
+  章节链接，按章节区间排序）或按列表顺序批量；每本书输出到
+  `cool18OutputRoot/<书名>/`（NNN_标题.txt + 合集.txt，UTF-8 BOM+CRLF）；
 - **Pixiv 小说**：粘贴小说/系列/作者链接或裸 ID → 单篇/系列/作者全量抓取，
   增量更新已抓系列（manifest 沿用旧插件数据，已抓记录无缝衔接）；
   已抓系列清单直接显示在面板里。
-- **小说站抓取**（说明默认折叠，点开查看）：
 
-<details>
-<summary><b>📖 小说站抓取说明（点击展开）</b></summary>
-
-**cool18 · 禁忌书屋**：粘贴帖子链接/ID（每行一个）→ 爬全本（跟随帖内
-章节链接，按章节区间排序）或按列表顺序批量；每本书输出到
-`cool18OutputRoot/<书名>/`（NNN_标题.txt + 合集.txt，UTF-8 BOM+CRLF）。
-走代理抓取，默认 `http://127.0.0.1:7897`，可配置。
-
-</details>
-
-底部任务条实时显示抓取进度，进行中可点"取消"；Pixiv 默认直连（可配代理）。
+底部任务条实时显示抓取进度，进行中可点"取消"；cool18 走代理抓取（默认
+`http://127.0.0.1:7897` 可配置），Pixiv 默认直连（可配代理）。
 
 ## 处理一本网文的标准流程
 
@@ -77,21 +71,12 @@ Pixiv 抓取：`pixivOutputRoot`（留空默认 `~/Novels/pixiv`）、
 `pixivMaxRetries`、`pixivPageSeparator`、`pixivRubyKeep`、`pixivSaveUrlNote`、
 `pixivSaveMeta`、`pixivRawCache`
 
-**抓取一（另一站点）设置**（默认折叠，点开查看）：
-
-<details>
-<summary><b>⚙️ 抓取一配置说明（点击展开）</b></summary>
-
-`cool18OutputRoot`（留空默认 `~/Novels/cool18`）、
-`cool18Proxy`（默认 http://127.0.0.1:7897）、
-`cool18Delay`（默认 1.0s，±20% 抖动）、
-`cool18MaxPages`（300）、
-`cool18MaxRetries`（单页最多尝试 4 次，失败页额外排队重试两轮）、
+cool18 抓取：`cool18OutputRoot`（留空默认 `~/Novels/cool18`）、
+`cool18Proxy`（默认 http://127.0.0.1:7897）、`cool18Delay`（默认 1.0s，±20% 抖动）、
+`cool18MaxPages`（300）、`cool18MaxRetries`（单页最多尝试 4 次，失败页额外排队重试两轮）、
 `scrapeCleanAds`（默认 true；保守清理明确广告/签名行，删除内容写入抓取日志）
 
-</details>
-
-<abbr title="pixivNovel.* 和 cool18Novel.* 里已设置的值会自动兜底生效">旧插件配置兼容（悬停查看）</abbr>。
+旧插件配置兼容：`pixivNovel.*` 和 `cool18Novel.*` 里已设置的值会自动兜底生效。
 
 ## 源码结构
 
