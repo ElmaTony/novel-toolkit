@@ -7,16 +7,15 @@
 //   TSPhrases.txt                繁→简 歧义词组（含恒等保护词组 如 乾坤→乾坤）
 //   CJK_Compatibility_Ideographs U+F900 兼容区→标准字（BIG5/GBK 转码残留）
 //   JPShinjitaiCharacters.txt    日文新字体→繁体（pixiv 机翻残留; 组合成 日文→简体）
-//   TWVariants.txt               台湾字形→标准繁体（组合成 直接→简体）
-//   HKVariants.txt               香港字形→标准繁体（组合成 直接→简体）
+//
+// 不使用（方向相反/会污染简体）:
+//   TWVariants.txt / HKVariants.txt   方向是 通用字形→台/港字形（如 着→著），组合会反向误转
+//   TWPhrases.txt / HKPhrases.txt     方向是 简→繁（大陆→台湾用词）
+//
+// 安全规则: 变体组合新增的映射, 键若属于 GB2312 简体规范字集则跳过
+//   （日文新字体与简体大量同形, 如 欠/翻/研/沪/芸/叙 —— 它们是合法简体字, 不能被转走）
 //
 // 用法: node scripts/gen-zh-data.js [opencc数据目录]   (默认 tmp-opencc/)
-//
-// 规则:
-//   - 字符表: 键或值不是单个 UTF-16 单元、或低于 U+2E80 的行跳过
-//   - 恒等映射 (繁===简) 跳过 —— 歧义字默认保持原样, 由引擎层手工覆盖
-//   - 变体组合: variant → 标准繁体 → 经主表转简体; 仅在 variant 未被主表收录时新增
-//   - 词组表: 恒等词组保留（如 乾坤→乾坤, 阻止字符层误转）; 单字"词组"折入字符表
 
 const fs = require('fs');
 const path = require('path');
@@ -70,15 +69,29 @@ const viaMain = (ch) => {
   return ch;
 };
 
-// ── 第 2 层: 变体字组合（CJK 兼容区 / 日文新字体 / 台港字形）──
+// ── GB2312 简体规范字集（6763 字, 16-87 区）──
+// 变体组合的键若在此集合内, 说明它是合法简体字, 转走它 = 简体误伤
+function gb2312Chars() {
+  const dec = new TextDecoder('gbk');
+  const set = new Set();
+  for (let q = 16; q <= 87; q++) {
+    for (let w = 1; w <= 94; w++) {
+      const s = dec.decode(Buffer.from([0xA0 + q, 0xA0 + w]));
+      if (s && s.length === 1 && s.codePointAt(0) >= 0x4E00) { set.add(s); }
+    }
+  }
+  return set;
+}
+const GB2312 = gb2312Chars();
+
+// ── 第 2 层: 变体字组合（CJK 兼容区 / 日文新字体）──
 const VARIANT_SOURCES = [
   'CJK_Compatibility_Ideographs.txt',
   'JPShinjitaiCharacters.txt',
-  'TWVariants.txt',
-  'HKVariants.txt',
 ];
 const variantCounts = {};
 let variantAdded = 0;
+let variantBlockedBySimplified = 0;
 for (const src of VARIANT_SOURCES) {
   variantCounts[src] = 0;
   for (const [variant, target] of parseDict(src)) {
@@ -86,6 +99,8 @@ for (const src of VARIANT_SOURCES) {
     if (variant === target) continue;
     // 已被主表收录的不动（主表优先）
     if (charSeen.has(variant)) continue;
+    // 键是 GB2312 简体规范字 → 跳过（防简体误伤）
+    if (GB2312.has(variant)) { variantBlockedBySimplified++; continue; }
     // 组合: 变体 → 标准繁体 → 简体
     const simplified = [...target].map(viaMain).join('');
     if (variant === simplified) continue;
@@ -146,7 +161,8 @@ console.log('字符对:', chars.length,
   '(TS主表', (chars.length - variantAdded - foldedSingle) +
   ', 恒等跳过 ' + skippedIdentity + ', 非BMP跳过 ' + skippedNonBmp + ')');
 console.log('变体组合新增', variantAdded, ':',
-  VARIANT_SOURCES.map((s) => s.replace('.txt', '') + ' +' + variantCounts[s]).join(' '));
+  VARIANT_SOURCES.map((s) => s.replace('.txt', '') + ' +' + variantCounts[s]).join(' '),
+  '| 简体字保护拦截 ' + variantBlockedBySimplified + ' 条');
 console.log('单字词组折入:', foldedSingle);
 console.log('词组:', phrases.length, '(原始 ' + rawPhrases.length + ')');
 console.log('写出:', path.relative(ROOT, OUT));

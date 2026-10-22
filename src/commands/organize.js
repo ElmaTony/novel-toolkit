@@ -4,8 +4,17 @@
 const vscode = require('vscode');
 const transforms = require('../engine/transforms');
 const chapters = require('../engine/chapters');
-const { t2s } = require('../engine/zh-convert');
+const { t2sDetail } = require('../engine/zh-convert');
 const { docLines, applyLines, noDoc } = require('../core/editor');
+
+// 繁简转换清单输出面板（懒创建, 复用）
+let _t2sChannel = null;
+function t2sChannel() {
+  if (!_t2sChannel) {
+    _t2sChannel = vscode.window.createOutputChannel('小说工具箱 · 繁简转换清单');
+  }
+  return _t2sChannel;
+}
 
 function registerOrganizeCommands({ reg, panel, checker, cfg }) {
   reg('merge', async () => {
@@ -232,16 +241,54 @@ function registerOrganizeCommands({ reg, panel, checker, cfg }) {
       return noDoc();
     }
     const lines = docLines(editor.document);
-    let count = 0;
-    const out = lines.map((l) => {
-      const r = t2s(l);
-      if (r !== l) count++;
-      return r;
+    let changedLines = 0;
+    let totalChanges = 0;
+    // 聚合: from\tto → { from, to, count, lines[] }（同一行同一字/词只记一次行号）
+    const agg = new Map();
+    const out = lines.map((l, idx) => {
+      const lineNo = idx + 1;
+      const { output, changes } = t2sDetail(l);
+      if (changes.length) {
+        changedLines++;
+        for (const c of changes) {
+          totalChanges++;
+          const key = c.from + '\t' + c.to;
+          let e = agg.get(key);
+          if (!e) {
+            e = { from: c.from, to: c.to, count: 0, lines: [] };
+            agg.set(key, e);
+          }
+          e.count++;
+          if (e.lines[e.lines.length - 1] !== lineNo) {
+            e.lines.push(lineNo);
+          }
+        }
+      }
+      return output;
     });
-    if (count === 0) {
+    if (totalChanges === 0) {
       return vscode.window.showInformationMessage('文件中没有繁体字');
     }
-    await applyLines(editor, out, '已转换 ' + count + ' 行的繁体字为简体；不满意可 Ctrl+Z 撤销');
+    // 清单面板: 按次数降序 + 长词组优先, 行号最多展示 12 个
+    const entries = [...agg.values()].sort((a, b) =>
+      (b.count - a.count) || (b.from.length - a.from.length) || (a.from < b.from ? -1 : 1));
+    const ch = t2sChannel();
+    ch.clear();
+    ch.appendLine('繁→简 转换清单 —— ' + (editor.document.fileName || '').split(/[\\/]/).pop());
+    ch.appendLine('共 ' + totalChanges + ' 处替换 · ' + changedLines + ' 行变化 · ' + entries.length + ' 个字/词（按出现次数排序）');
+    ch.appendLine('─'.repeat(56));
+    for (const e of entries) {
+      const shown = e.lines.slice(0, 12).join(', ');
+      const more = e.lines.length > 12 ? ' …共' + e.lines.length + '行' : '';
+      const tag = e.from.length > 1 ? '（词组）' : '';
+      ch.appendLine(e.from + ' → ' + e.to + tag + ' ×' + e.count + '　行 ' + shown + more);
+    }
+    ch.show(true); // true = 保持编辑器焦点
+    await applyLines(
+      editor,
+      out,
+      '已转换 ' + changedLines + ' 行（' + totalChanges + ' 处），清单已输出到「繁简转换清单」面板；不满意可 Ctrl+Z 撤销'
+    );
   });
 }
 
