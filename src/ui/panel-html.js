@@ -408,7 +408,7 @@ function buildPanelHtml() {
   </span>
   <div class="tabs">
     <button class="tab active" data-tab="organize" title="排版流水线：贴左/短行/引号检查、一键整理、章节导航（打开面板：Alt+F10 / Alt+F11）">整理</button>
-    <button class="tab" data-tab="scrape" title="cool18 禁忌书屋 / Pixiv 小说抓取（打开面板：Alt+F10 / Alt+F11）">抓取</button>
+    <button class="tab" data-tab="scrape" title="cool18 书屋 / Pixiv 小说抓取（打开面板：Alt+F10 / Alt+F11）">抓取</button>
   </div>
 </div>
 
@@ -499,7 +499,7 @@ function buildPanelHtml() {
 <div id="tab-scrape" class="tabpage" hidden>
 
   <div class="section">
-    <div class="section-title">cool18 · 禁忌书屋</div>
+    <div class="section-title">cool18 书屋</div>
     <div class="meta-line" id="cool18Meta">输出目录加载中…</div>
     <textarea id="cool18Input" class="ta" rows="3"
       placeholder="粘贴帖子链接或帖子 ID，每行一个&#10;单个链接 = 自动跟随章节链接爬全本；多个 = 按列表顺序抓取"></textarea>

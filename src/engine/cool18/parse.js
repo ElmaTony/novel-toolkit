@@ -1,6 +1,6 @@
 'use strict';
 
-// cool18（留园禁忌书屋）解析层 —— 从 Python 版 cool18_scraper.py 移植为纯 JS
+// cool18（留园书屋）解析层 —— 从 Python 版 cool18_scraper.py 移植为纯 JS
 // 页面结构 (2026-10 验证):
 //   标题: <h1 class="main-title">…</h1>
 //   作者: 送交者: <a …>名字</a> … 于 YYYY-MM-DD HH:MM

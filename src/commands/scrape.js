@@ -108,7 +108,7 @@ function registerScrapeCommands({ reg, panel, scrape }) {
 
   reg('cool18Search', async () => {
     const kw = await vscode.window.showInputBox({
-      prompt: '输入书名或作者关键词，搜索 cool18 禁忌书屋（结果可多选；选 1 个自动爬全本）',
+      prompt: '输入书名或作者关键词，搜索 cool18 书屋（结果可多选；选 1 个自动爬全本）',
       ignoreFocusOut: true,
     });
     if (!kw || !kw.trim()) return;
