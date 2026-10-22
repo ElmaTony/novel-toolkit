@@ -42,3 +42,30 @@ npm run update   # 等价于 node scripts/update.js
 - 尽量小步提交，描述清楚改了什么
 - 不要提交 `*.vsix`、`*.bak`、本地输出目录、Cookie 或个人路径
 - 新增设置项时同步更新 `package.json` 和 `README.md`
+
+## 发版流程（每次更新固定步骤）
+
+1. **改代码 → 测试**：`node test/run-all.js` + `node test/wiring-audit.js` 全绿
+2. **升版本**：`package.json` version 递增，`CHANGELOG.md` 记一条
+3. **打包安装**：`npm run update`（打包 + 安装到 VSCode），`Developer: Reload Window` 验证
+4. **推送源码**（git 必须挂代理，直连会 502）：
+   ```bash
+   git add -A && git commit -m "..."
+   git -c http.proxy=http://127.0.0.1:7897 push origin main
+   ```
+5. **打标签推送**：
+   ```bash
+   git tag -a vX.Y.Z -m "vX.Y.Z 一句话说明"
+   git -c http.proxy=http://127.0.0.1:7897 push origin main --tags
+   ```
+6. **发行版**（GitHub Release，API 也要挂代理 `-x http://127.0.0.1:7897`）：
+   - `npx vsce package` 打通用包 + 4 个平台包（win32-x64 / darwin-x64 / darwin-arm64 / linux-x64）
+   - **隐私审计**：解包 `unzip -l` 列全部文件 + grep 本地路径/token/cookie，确认只有插件代码
+   - GitHub API 创建 Release（tag 指向新版本）并上传 5 个 vsix
+7. **清理**：删 `*.vsix`、`tmp-*/` 等临时产物，`git status` 确认工作树干净
+
+### 隐私红线（每次发行前必查）
+
+- 不得包含：本地输出路径（F:\Telegram...）、任何 token/cookie、测试抓取产物、`tmp-*` 目录
+- `.vscodeignore` 已排除 `tmp-*/`，打包后仍要解包抽查
+- 面板 UI 文案避免使用站点全名
