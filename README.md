@@ -23,15 +23,13 @@
 - 章节列表：搜索过滤、当前章自动高亮、定位当前章、点击跳转。
 
 **📥 抓取** —— 两个来源：
-- **cool18 · 禁忌书屋**：粘贴帖子链接/ID（每行一个）→ 爬全本（跟随帖内
-  章节链接，按章节区间排序）或按列表顺序批量；每本书输出到
-  `cool18OutputRoot/<书名>/`（NNN_标题.txt + 合集.txt，UTF-8 BOM+CRLF）；
+- **cool18 · 禁忌书屋**：贴帖子链接/ID 爬全本 <abbr title="粘贴帖子链接/ID（每行一个）→ 爬全本（跟随帖内章节链接，按章节区间排序）或按列表顺序批量；每本书输出到 cool18OutputRoot/<书名>/（NNN_标题.txt + 合集.txt，UTF-8 BOM+CRLF）">（悬停查看详情）</abbr>
 - **Pixiv 小说**：粘贴小说/系列/作者链接或裸 ID → 单篇/系列/作者全量抓取，
   增量更新已抓系列（manifest 沿用旧插件数据，已抓记录无缝衔接）；
   已抓系列清单直接显示在面板里。
 
-底部任务条实时显示抓取进度，进行中可点"取消"；cool18 走代理抓取（默认
-`http://127.0.0.1:7897` 可配置），Pixiv 默认直连（可配代理）。
+底部任务条实时显示抓取进度，进行中可点"取消"；
+<abbr title="cool18 走代理抓取，默认 http://127.0.0.1:7897，可配置">cool18 代理设置悬停查看</abbr>，Pixiv 默认直连（可配代理）。
 
 ## 处理一本网文的标准流程
 
@@ -61,10 +59,12 @@
 `indentSkipChapterTitles` / `indentNormalizeExisting` / `chapterPattern`
 （`chapterPattern` 留空 = 内置智能识别，支持中等长度、标题内 `！？…` 与上下文兜底）
 
-cool18 抓取：`cool18OutputRoot`（留空默认 `~/Novels/cool18`）、
-`cool18Proxy`（默认 http://127.0.0.1:7897）、`cool18Delay`（默认 1.0s，±20% 抖动）、
-`cool18MaxPages`（300）、`cool18MaxRetries`（单页最多尝试 4 次，失败页额外排队重试两轮）、
-`scrapeCleanAds`（默认 true；保守清理明确广告/签名行，删除内容写入抓取日志）
+cool18 抓取：<abbr title="留空默认 ~/Novels/cool18">`cool18OutputRoot`</abbr>、
+<abbr title="默认 http://127.0.0.1:7897">`cool18Proxy`</abbr>、
+<abbr title="默认 1.0s，±20% 抖动">`cool18Delay`</abbr>、
+<abbr title="300">`cool18MaxPages`</abbr>、
+<abbr title="单页最多尝试 4 次，失败页额外排队重试两轮">`cool18MaxRetries`</abbr>、
+<abbr title="默认 true；保守清理明确广告/签名行，删除内容写入抓取日志">`scrapeCleanAds`</abbr>
 
 Pixiv 抓取：`pixivOutputRoot`（留空默认 `~/Novels/pixiv`）、
 `pixivCookie`（推荐用命令存到私密存储）、`pixivProxy`（留空=直连）、
@@ -79,8 +79,7 @@ Pixiv 抓取：`pixivOutputRoot`（留空默认 `~/Novels/pixiv`）、
 - **Pixiv小说扒取 → novelToolkit**：输出目录与 manifest 完全沿用（已抓系列
   的增量更新直接可用）；唯一变化是 Cookie 存储位置改为 VSCode 私密存储，
   **首次使用需重新粘贴一次 Cookie**（旧配置里明文存的 cookie 仍会被读取）；
-- **cool18小说扒取 → novelToolkit**：原 Python 引擎重写为纯 JS，逻辑一致
-  （元信息保留、段内硬换行合并、章节区间排序、合集.txt），不再依赖 Python；
+- **cool18小说扒取 → novelToolkit**：原 Python 引擎重写为纯 JS <abbr title="逻辑一致（元信息保留、段内硬换行合并、章节区间排序、合集.txt），不再依赖 Python">（悬停查看迁移细节）</abbr>；
 - 两个旧插件已从扩展目录移除。
 
 ## 源码结构
