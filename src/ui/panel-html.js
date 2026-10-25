@@ -440,13 +440,22 @@ function buildPanelHtml() {
   </div>
 
   <div class="section">
+    <div class="section-title">增强处理</div>
+    <div class="grid">
+      <button data-run="t2sFile">繁→简</button>
+      <button data-run="fullwidthToHalfwidth" title="Ｓｏｒｒｙ→Sorry、１２３→123；中文标点可保留；汉字与全角空格　不会被动">全角→半角（Ｓｏｒｒｙ → Sorry）</button>
+      <button class="wide" data-run="replaceCornerQuotes" title="「」→“”，『』→‘’；含嵌套引号一起转换">直角引号换弯引号（「」→“”，『』→‘’）</button>
+    </div>
+  </div>
+
+  <div class="section">
     <div class="section-title">检查与跳转</div>
     <button class="full primary" data-run="check">全文检查（空白 + 短行 + 引号）</button>
     <button class="full" data-run="checkChapters" title="按卷分组核对章节编号连续性，报告缺失与重复编号">章节缺失检查</button>
     <div class="nav-row">
       <span class="nav-label">空白</span>
-      <button data-run="prevProblem" title="跳到上一处行首空白（Shift+Alt+F8）">‹ 上一处</button>
-      <button data-run="nextProblem" title="跳到下一处行首空白（Alt+F8）">下一处 ›</button>
+      <button data-run="prevProblem" title="跳到上一处空白（行首缩进/正文空格，Shift+Alt+F8）">‹ 上一处</button>
+      <button data-run="nextProblem" title="跳到下一处空白（行首缩进/正文空格，Alt+F8）">下一处 ›</button>
     </div>
     <div class="nav-row">
       <span class="nav-label">短行</span>
@@ -471,15 +480,6 @@ function buildPanelHtml() {
       <button data-run="detectEncoding">检测文件编码</button>
       <button data-run="convertToUtf8">转为 UTF-8</button>
       <button class="wide" data-run="setupEncoding">启用中文编码自动识别</button>
-    </div>
-  </div>
-
-  <div class="section">
-    <div class="section-title">增强处理</div>
-    <div class="grid">
-      <button data-run="t2sFile">繁→简</button>
-      <button data-run="fullwidthToHalfwidth" title="Ｓｏｒｒｙ→Sorry、１２３→123；中文标点可保留；汉字与全角空格　不会被动">全角→半角（Ｓｏｒｒｙ → Sorry）</button>
-      <button class="wide" data-run="replaceCornerQuotes" title="「」→“”，『』→‘’；含嵌套引号一起转换">直角引号换弯引号（「」→“”，『』→‘’）</button>
     </div>
   </div>
 

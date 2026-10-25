@@ -15,23 +15,25 @@ function registerNavigationCommands({ reg, panel, checker, cfg }) {
     if (!r) {
       return vscode.window.showInformationMessage('当前文件类型已排除检查');
     }
-    if (r.ws.length === 0 && r.short.length === 0 && r.quote.length === 0) {
-      return vscode.window.showInformationMessage('已扫描全文：所有行都已贴最左侧，也没有引号配对问题 ✓');
+    if (r.ws.length === 0 && r.mid.length === 0 && r.short.length === 0 && r.quote.length === 0) {
+      return vscode.window.showInformationMessage('已扫描全文：没有空白问题（行首/正文），也没有引号配对问题 ✓');
     }
-    if (r.ws.length > 0) {
-      jumpToLine(editor, r.ws, r.ws[0]);
+    if (r.ws.length > 0 || r.mid.length > 0) {
+      const blankLines = [...new Set([...r.ws, ...r.mid])].sort((a, b) => a - b);
+      jumpToLine(editor, blankLines, blankLines[0]);
     } else if (r.quote.length > 0) {
       jumpToLine(editor, r.quote, r.quote[0], '引号配对');
     } else {
       jumpToLine(editor, r.short, r.short[0], '残留短行');
     }
     vscode.window.showInformationMessage(
-      '已扫描全文：' + r.ws.length + ' 处行首空白、' + r.short.length + ' 处疑似标点短行、' +
+      '已扫描全文：' + r.ws.length + ' 处行首空白、' + r.mid.length + ' 处正文空格、' +
+      r.short.length + ' 处疑似标点短行、' +
       r.quote.length + ' 处引号疑似不配对；Alt+F8 / Alt+F7 逐个跳转'
     );
   });
 
-  const makeJump = (key, label, emptyMsg, backwards) => () => {
+  const makeJump = (keys, label, emptyMsg, backwards) => () => {
     const editor = panel.editor();
     if (!editor) {
       return;
@@ -40,7 +42,8 @@ function registerNavigationCommands({ reg, panel, checker, cfg }) {
     if (!r) {
       return;
     }
-    const lines = r[key];
+    const keyList = Array.isArray(keys) ? keys : [keys];
+    const lines = [...new Set([].concat(...keyList.map((k) => r[k] || [])))].sort((a, b) => a - b);
     if (lines.length === 0) {
       vscode.window.setStatusBarMessage(emptyMsg, 4000);
       return;
@@ -66,8 +69,8 @@ function registerNavigationCommands({ reg, panel, checker, cfg }) {
     jumpToLine(editor, lines, target, label);
   };
 
-  reg('nextProblem', makeJump('ws', '行首空白', '全文没有行首空白 ✓', false));
-  reg('prevProblem', makeJump('ws', '行首空白', '全文没有行首空白 ✓', true));
+  reg('nextProblem', makeJump(['ws', 'mid'], '空白', '全文没有空白问题（行首/正文）✓', false));
+  reg('prevProblem', makeJump(['ws', 'mid'], '空白', '全文没有空白问题（行首/正文）✓', true));
   reg('nextShort', makeJump('short', '残留短行', '全文没有标点短行 ✓', false));
   reg('prevShort', makeJump('short', '残留短行', '全文没有标点短行 ✓', true));
   reg('nextQuote', makeJump('quote', '引号配对', '全文没有引号配对问题 ✓', false));

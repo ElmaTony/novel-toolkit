@@ -386,6 +386,29 @@ eq(zh.t2s(zh.t2s('\uF900') + '\u8FCE'), '岂迎', '繁转简: CJK兼容区豈→
 eq(zh.t2s('\uF904\u8ECA'), '滑车', '繁转简: CJK兼容区滑+車→滑车');
 eq(zh.PAIRS.length > 3600, true, '繁简: 字表规模 >3600（含变体组合）');
 
+// ============ 1.6b 空白检查（行首 + 正文空格） ============
+console.log('== 空白检查 scanLines');
+{
+  const r = t.scanLines([
+    '他 说了一句话',      // 0 汉字间半角空格 → mid
+    '他走了   ',          // 1 行尾空格 → mid
+    'I love you so much', // 2 英文空格 → 不报
+    '用 VSCode 打开文件',  // 3 中英之间空格 → 不报
+    '干干净净的文字',      // 4 不报
+    '　　他说',           // 5 行首全角缩进 → ws
+    '１２３　４５６',      // 6 全角空格在数字间 → 不报（保守）
+    '',                   // 7 空行
+  ], { ignoreBlankLines: true });
+  eq(JSON.stringify(r.ws.map((w) => w.line)), '[5]', '空白: 行首缩进只报 ws');
+  eq(r.mid.length, 2, '空白: 正文空格报 2 处（汉字间 + 行尾）');
+  eq(r.mid[0].line === 0 && r.mid[0].col === 1 && r.mid[0].len === 1, true, '空白: 汉字间空格定位正确');
+  eq(r.mid[1].line === 1 && r.mid[1].col === 3 && r.mid[1].len === 3, true, '空白: 行尾空格定位正确');
+  const r2 = t.scanLines(['他 说'], {});
+  eq(r2.mid.length, 1, '空白: 单行也能检出汉字间空格');
+  const r3 = t.scanLines(['他\u3000说'], {});
+  eq(r3.mid.length, 0, '空白: 行中全角空格不报（保守，避免碰缩进语义）');
+}
+
 
 
 // ============ 1.7 省略号整改 ============

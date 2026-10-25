@@ -57,6 +57,16 @@ class Checker {
       d.code = 'leading-whitespace';
       list.push(d);
     }
+    for (const w of r.mid) {
+      const d = new vscode.Diagnostic(
+        new vscode.Range(w.line, w.col, w.line, w.col + w.len),
+        '第 ' + (w.line + 1) + ' 行' + w.desc + '，请删除',
+        vscode.DiagnosticSeverity.Warning
+      );
+      d.source = SOURCE;
+      d.code = 'mid-space';
+      list.push(d);
+    }
     for (const s of r.short) {
       const d = new vscode.Diagnostic(
         new vscode.Range(s.line, s.lead, s.line, s.lead + s.text.length),
@@ -81,6 +91,7 @@ class Checker {
     this.notify();
     return {
       ws: r.ws.map((w) => w.line),
+      mid: [...new Set(r.mid.map((w) => w.line))],
       short: r.short.map((s) => s.line),
       quote: r.quote.map((q) => q.line)
     };
@@ -132,6 +143,7 @@ class Checker {
     const dl = this.diags.get(uri) || [];
     return {
       ws: dl.filter((d) => d.code === 'leading-whitespace').length,
+      mid: dl.filter((d) => d.code === 'mid-space').length,
       short: dl.filter((d) => d.code === 'short-line').length,
       quote: dl.filter((d) => d.code === 'quote-pair').length,
       silenced: this.silenced.has(uri.toString())
@@ -179,12 +191,12 @@ class Checker {
       this.statusBar.show();
       return;
     }
-    if (c.ws === 0 && c.short === 0) {
+    if (c.ws === 0 && c.mid === 0 && c.short === 0) {
       this.statusBar.text = '贴左:✓';
-      this.statusBar.tooltip = '当前文件所有行都贴最左侧（点击重新检查）';
+      this.statusBar.tooltip = '当前文件所有行都贴最左侧、无正文空格（点击重新检查）';
     } else {
-      this.statusBar.text = '贴左:' + c.ws + (c.short > 0 ? ' 残留:' + c.short : '');
-      this.statusBar.tooltip = '当前文件有 ' + c.ws + ' 处行首空白' +
+      this.statusBar.text = '贴左:' + c.ws + (c.mid > 0 ? ' 空格:' + c.mid : '') + (c.short > 0 ? ' 残留:' + c.short : '');
+      this.statusBar.tooltip = '当前文件有 ' + c.ws + ' 处行首空白、' + c.mid + ' 处正文空格' +
         (c.short > 0 ? '、' + c.short + ' 处疑似标点短行' : '') + '（点击重新检查）';
     }
     this.statusBar.show();
