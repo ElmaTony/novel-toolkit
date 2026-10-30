@@ -7,10 +7,14 @@ test-out.txt
 tmp-*/
 tmp-*/**
 AGENTS.md
-CONTRIBUTING.md
 preview/**
 scripts/**
 .agents/**
 .codex/**
 *.bak
 *.tmp
+.gitignore
+.vscode/**
+.aws/**
+**/.env
+**/.env.*

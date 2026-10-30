@@ -2,7 +2,7 @@
   "name": "novel-toolkit",
   "displayName": "小说工具箱 Novel Toolkit",
   "description": "网文整理一条龙：贴左检查+定位、合并段内换行、去缩进、章节名跳转/列表、批量添加首行缩进、批量整理/转码、cool18/Pixiv 抓取。检查只读不改；整理类命令仅手动触发。",
-  "version": "0.16.7",
+  "version": "0.16.8",
   "publisher": "localtools",
   "license": "MIT",
   "repository": {
@@ -242,7 +242,7 @@
         "novelToolkit.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "自动检查打开/编辑的文件中行首是否有空白"
+          "description": "自动检查打开/编辑的文件中的行首空白、正文空格，以及已启用的标点短行和引号问题"
         },
         "novelToolkit.ignoreBlankLines": {
           "type": "boolean",
@@ -310,7 +310,7 @@
         "novelToolkit.chapterPattern": {
           "type": "string",
           "default": "",
-          "description": "章节名识别正则（对每一行做测试）。留空使用内置智能识别：支持中文章节号、卷名、序章/番外、Chapter N、标题内 ！？… 等标点，并用上下文兜底识别中等长度标题；如需严格自定义可填入自己的正则"
+          "description": "章节名识别正则（对每一行做测试）。留空使用内置识别，支持中文章节号、卷名、序章/番外、Chapter N 和标题内 ！？… 等标点；自定义正则未命中的行仍可能由内置上下文规则识别"
         },
         "novelToolkit.batchBackup": {
           "type": "boolean",
@@ -325,7 +325,7 @@
         "novelToolkit.cool18Proxy": {
           "type": "string",
           "default": "http://127.0.0.1:7897",
-          "description": "cool18 抓取使用的 HTTP 代理（cool18 在本机一般需走代理；留空=直连）"
+          "description": "cool18 抓取使用的 HTTP 代理，默认 http://127.0.0.1:7897。留空时回退到旧配置 cool18Novel.proxy，旧项未设置时仍使用默认代理；需要直连时将新旧两项均显式设为空字符串"
         },
         "novelToolkit.cool18Delay": {
           "type": "number",
@@ -364,7 +364,7 @@
         "novelToolkit.pixivProxy": {
           "type": "string",
           "default": "http://127.0.0.1:7897",
-          "description": "Pixiv 抓取的 HTTP 代理（pixiv.net 在国内需走代理；默认使用本机 7897 端口）"
+          "description": "Pixiv 抓取使用的 HTTP 代理，默认 http://127.0.0.1:7897。留空时回退到旧配置 pixivNovel.proxy，旧项未设置时仍使用默认代理；需要直连时将新旧两项均显式设为空字符串"
         },
         "novelToolkit.pixivIntervalMs": {
           "type": "number",
@@ -377,7 +377,7 @@
           "default": 1,
           "minimum": 1,
           "maximum": 3,
-          "description": "Pixiv 并发数（默认 1 串行最稳；作者全量可开 2-3）"
+          "description": "Pixiv 请求层并发上限（1-3，默认 1）。当前目标和章节下载流程依次执行，调高此值不保证加速"
         },
         "novelToolkit.pixivMaxRetries": {
           "type": "number",

@@ -6,3 +6,10 @@ node_modules/
 Thumbs.db
 tmp-opencc/
 tmp-*/
+/AGENTS.md
+.codex/
+.agents/
+.aws/
+.env
+.env.*
+*.log

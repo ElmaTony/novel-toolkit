@@ -1,118 +1,146 @@
 # 小说工具箱 Novel Toolkit
 
-网文一站式工具箱：**贴左/短行检查**、**排版整理**、**章节导航**，以及内置的
-**cool18 书屋抓取**与 **Pixiv 小说抓取**（由原独立插件合并而来）。
-检查只读不改；整理类命令与抓取仅在主动触发时运行，整理均可 Ctrl+Z 撤销。
+在 VS Code 中抓取、整理和校对小说文本：支持空白与标点检查、段落排版、章节导航、繁简转换、中文编码处理，以及 cool18 书屋和 Pixiv 小说抓取。
+
+检查只标记问题，不修改正文。当前文件的正文整理可用 `Ctrl+Z` 撤销；文件转码和文件夹批量处理会直接写入磁盘，批量处理默认保留 `.bak` 备份。
 
 ## 安装
 
-从 [Releases](https://github.com/ElmaTony/novel-toolkit/releases) 下载 vsix
-（通用包即可，Windows / macOS / Linux 通用），然后在 VSCode 中执行
-`Extensions: Install from VSIX...` 选择文件，或直接拖入扩展面板。
-安装后执行 `Developer: Reload Window` 生效。
+从 [最新发行版](https://github.com/ElmaTony/novel-toolkit/releases/latest) 下载一个 `.vsix` 安装包。
 
-开发自装：仓库根目录运行 `npm run update`（自动打包最新版并安装）。
+| 安装包 | 适用平台 |
+| --- | --- |
+| `novel-toolkit-<版本>.vsix` | 通用包，Windows / macOS / Linux 均可使用，推荐选择 |
+| `novel-toolkit-win32-x64-<版本>.vsix` | Windows x64 |
+| `novel-toolkit-darwin-arm64-<版本>.vsix` | macOS Apple Silicon（M 系列芯片） |
+| `novel-toolkit-darwin-x64-<版本>.vsix` | macOS Intel |
+| `novel-toolkit-linux-x64-<版本>.vsix` | Linux x64 |
 
-## 工具面板（Alt+F10 或状态栏 📖 工具箱）
+在 VS Code 命令面板执行 `Extensions: Install from VSIX...`，选择下载的文件；也可拖入扩展面板。安装或更新后执行 `Developer: Reload Window`。
 
-面板采用 **Claude CDS 暖调编辑感**（陶土橙强调色、暖灰表面阶梯、发丝细边、克制的弹簧动效），深浅色自动跟随 VSCode 主题。
+要求 VS Code 1.70 或更新版本。插件使用 JavaScript，无需安装 Python 或额外运行时。源码本地安装可在仓库根目录执行 `npm run update`，需要 Node.js 和可用的 `code` 命令。
 
-面板分两个标签页：
+## 工具面板
 
-**📖 整理** —— 排版流水线：
-- 文件卡片：文件名 + 贴左/短行/章节三枚状态徽章（✓绿=干净，黄=有问题）；
-- 一键整理按钮：合并段落内换行 / 消除空白行 / 去除行首缩进 / 添加首行缩进 /
-  章节名前插入空行（首章除外）；
-- 检查跳转：全文检查 + 空白、短行、章节三组 ‹ › 按钮；
-- 章节列表：搜索过滤、当前章自动高亮、定位当前章、点击跳转。
+按 `Alt+F10` / `Alt+F11`，或点击状态栏的“小说工具箱”打开面板。界面随 VS Code 深浅主题切换。
 
-**📥 抓取** —— 两个来源：
-- **cool18 书屋**：粘贴帖子链接/ID（每行一个）→ 爬全本（跟随帖内
-  章节链接，按章节区间排序）或按列表顺序批量；每本书输出到
-  `cool18OutputRoot/<书名>/`（NNN_标题.txt + 合集.txt，UTF-8 BOM+CRLF）；
-- **Pixiv 小说**：粘贴小说/系列/作者链接或裸 ID → 单篇/系列/作者全量抓取，
-  增量更新已抓系列（manifest 沿用旧插件数据，已抓记录无缝衔接）；
-  已抓系列清单直接显示在面板里。
-  普通抓取中的裸 ID 按单篇处理；「作者全量」中的裸 ID 按作者处理。
+### 整理
 
-底部任务条实时显示抓取进度，进行中可点"取消"；cool18 走代理抓取（默认
-`http://127.0.0.1:7897` 可配置），Pixiv 默认直连（可配代理）。
+- 文件名可点击重命名；徽章显示贴左、标点短行、引号和章节状态。正文空格数量另在编辑器状态栏显示。
+- 正文整理：合并段内换行、消除空白行、去除或添加缩进、章节名前插入空行、章节号转汉字、省略号整改。
+- 增强处理：繁体转简体、全角转半角、直角引号转弯引号。繁简转换后可查看字词替换次数和行号。
+- 检查与跳转：行首空白、汉字间半角空格、行尾空格、标点短行、行内引号开合数量，以及按卷检查章节缺失和重复编号。
+- 章节列表支持按卷分组、搜索、当前章节高亮及点击跳转。
+- 编码处理支持检测当前文件编码、转为 UTF-8，以及启用 VS Code 中文编码自动识别。
 
-## 处理一本网文的标准流程
+引号检查以单行为单位比较开合数量，适合合并段内换行后使用。章节识别、段落合并和繁简转换包含启发式规则，处理后可结合原文核对。
 
-1. 抓取（📥 抓取标签）或打开本地 txt；
-2. 合并段落内换行（此时段首缩进还在，正好用来识别段落）；
-3. `Alt+F7`/`Shift+Alt+F7` 清理合并残留的标点短行（只定位，自己删）；
-4. 去除行首缩进（贴左），`Alt+F8`/`Shift+Alt+F8` 逐行核对；
-5. `Alt+F9`/`Shift+Alt+F9` 或章节列表翻章核对；
-6. 章节名前插入空行（可选）→ 批量添加首行缩进（　　）。
+### 推荐整理顺序
 
-保存（Ctrl+S）清空警告并暂停检查（`silenceAfterSave` 可关）。
+1. 抓取小说或打开本地 `.txt`。
+2. 保留原有段首缩进，先合并段内换行；缩进和句末标点用于判断段落边界。
+3. 用标点短行和引号检查核对合并结果。
+4. 去除行首缩进，再检查行首、正文和行尾空格。
+5. 核对章节列表、编号缺失和重复情况，按需统一章节号。
+6. 按需进行繁简、标点、全角转换，插入章节前空行，最后添加首行缩进。
 
-文件夹批量整理/转码支持取消：当前文件处理完成后停止，保留已完成的结果与备份。
-同一时间只能运行一个批量任务。
+默认在保存或添加缩进后清空诊断并暂停自动检查。运行“全文检查”或按 `Alt+F8` 可恢复；保存后的暂停行为可通过 `silenceAfterSave` 关闭。
+
+## 小说抓取
+
+两种来源共用抓取任务入口，同一时间运行一个抓取任务。面板提供进度、取消、日志、输出目录和最近 50 条抓取历史。
+
+### cool18 书屋
+
+输入帖子链接或帖子 ID，每行一条。单个输入会自动跟随帖内章节链接；多个输入可按列表顺序抓取。“爬全本”从第一个输入出发遍历链接，不代表能发现站点中所有相关帖子。可用搜索选择帖子，或通过“抓当前文件链接”按列表抓取选中内容或全文中的链接。
+
+自动遍历会按卷、章及上中下部序排序，同章同部序的重复帖保留正文较长的一份，并提示检测到的编号缺口。未相互链接的章节可能需要手动补入列表。
+
+默认输出根目录为 `~/Novels/cool18`，每次输出到以首个输出帖子标题命名的子目录：
+
+- 单帖文件：`001_帖子标题.txt`、`002_帖子标题.txt` 等。
+- 抓到多个帖子时生成合集，如 `书名【完】作者：作者名.txt` 或 `书名【1-最新章号】作者：作者名.txt`；名称根据帖子标题推断。
+- 文本采用 UTF-8 BOM 和 CRLF 换行，同名现有文件会跳过。
+
+默认清理明确的站点广告和签名行，删除记录写入日志。单页请求默认最多尝试 4 次；自动遍历模式下，失败页还会额外排队重试两轮。
+
+### Pixiv 小说
+
+支持小说、系列、作者链接，包括旧式 `novel/show.php?id=...` 链接。多个链接可一起粘贴；裸数字仅支持单个输入。
+
+| 入口 | 裸数字的含义 |
+| --- | --- |
+| “开始抓取”或普通 Pixiv 抓取命令 | 单篇小说 ID |
+| “作者全量…” | 作者 ID |
+
+默认输出根目录为 `~/Novels/pixiv`：单篇放在作者目录下，系列放在作者目录下的系列子目录中。系列包含编号章节文件和 `_合并.txt`，可选保存原始链接注记和 `.meta.json` 元数据。输出文本采用 UTF-8 和 CRLF 换行。
+
+`pixiv-manifest.json` 记录已抓作品和系列进度。重新抓取系列时会跳过正常存在的章节，重试失败章，并补抓缺失文件或空壳文件。“增量更新”按系列总章数增长判断是否有新章；章数没变但本地缺章时，请重新抓取该系列。
+
+普通抓取跳过同名正文文件；系列 `_合并.txt`、manifest 和可选元数据会更新，确认是空壳的章节文件可重新写入。勾选“强制重抓”会先删除目标单篇文件，或删除整个系列目录及其抓取记录，再重新下载。系列目录中的手动修改也会被删除，使用前请备份。
+
+需要登录的作品及作者作品列表可能依赖 Cookie。使用“Cookie…”保存 PHPSESSID 值或完整 Cookie，插件会存入 VS Code 私密存储。受限作品还需要账号具备相应访问权限和显示设置；空正文会记录为失败，系列连续三章空正文时停止继续下载。取消后可重新抓取系列，沿用已保存的章节进度。
+
+### 代理设置
+
+cool18 和 Pixiv 的默认 HTTP 代理均为 `http://127.0.0.1:7897`，使用前需确保该地址有可用的代理服务，也可设置为自己的 HTTP 代理地址。
+
+配置分别为 `novelToolkit.cool18Proxy` 和 `novelToolkit.pixivProxy`。新配置留空时会读取旧插件的 `cool18Novel.proxy` / `pixivNovel.proxy`；旧项未设置时仍回退到默认代理。因此，仅清空新项不一定会直连。需要直连时，将新项和对应旧项都显式设为空字符串。以抓取运行日志和实际配置为准。
+
+## 文件夹批量处理与编码
+
+从命令面板运行“批量整理文件夹”或“批量转码文件夹为 UTF-8”，递归处理 `.txt`，不跟随符号链接或目录联接。
+
+- 批量整理依次执行合并段内换行、去缩进、添加首行缩进，有改动时写为 UTF-8 BOM 和 CRLF。
+- 批量转码只归一编码，已是 UTF-8 的文件跳过；解码出现替换字符的文件跳过并记录。
+- `batchBackup` 默认开启，首次改写前保存 `原文件.txt.bak`，已有备份不覆盖。
+- 支持取消，当前文件处理完后停止，已完成的修改和备份保留；同一时间只运行一个批量任务。
+
+编码检测面向中文小说，支持 UTF-8、UTF-16 LE/BE、GB18030（兼容 GBK/GB2312）和 Big5。检测结果属于推断。当前文件单独转码要求先保存，会直接改写磁盘文件，不自动生成 `.bak`。
 
 ## 快捷键
 
 | 按键 | 功能 |
 | --- | --- |
 | `Alt+F7` / `Shift+Alt+F7` | 下一处 / 上一处标点短行 |
-| `Alt+F8` / `Shift+Alt+F8` | 下一处 / 上一处行首空白 |
-| `Alt+F9` / `Shift+Alt+F9` | 下一章 / 上一章 |
+| `Alt+F8` / `Shift+Alt+F8` | 下一处 / 上一处空白问题，覆盖行首、汉字间和行尾空格 |
+| `Alt+F9` / `Shift+Alt+F9` | 下一章 / 上一章（含卷名行） |
 | `Alt+F10` / `Alt+F11` | 打开工具面板 |
 
-## 设置（settings 搜 "Novel Toolkit"）
+引号跳转可通过面板按钮或命令面板运行，没有默认全局快捷键。
 
-整理：`enabled` / `ignoreBlankLines` / `excludedLanguages` /
-`silenceAfterSave` / `shortLineCheck` / `shortLineMaxChars` /
-`indentStartsParagraph` / `smartParagraphs` / `keepBlankLines` / `indentString` /
-`indentSkipChapterTitles` / `indentNormalizeExisting` / `chapterPattern`
-（`chapterPattern` 留空 = 内置智能识别，支持中等长度、标题内 `！？…` 与上下文兜底）
+## 设置
 
-Pixiv 抓取：`pixivOutputRoot`（留空默认 `~/Novels/pixiv`）、
-`pixivCookie`（推荐用命令存到私密存储）、`pixivProxy`（留空=直连）、
-`pixivIntervalMs`（1200ms ±30% 抖动）、`pixivConcurrency`（1-3）、
-`pixivMaxRetries`、`pixivPageSeparator`、`pixivRubyKeep`、`pixivSaveUrlNote`、
-`pixivSaveMeta`、`pixivRawCache`
+在 VS Code 设置中搜索“Novel Toolkit”。以下名称均加前缀 `novelToolkit.`。
 
-cool18 抓取：`cool18OutputRoot`（留空默认 `~/Novels/cool18`）、
-`cool18Proxy`（默认 http://127.0.0.1:7897）、`cool18Delay`（默认 1.0s，±20% 抖动）、
-`cool18MaxPages`（300）、`cool18MaxRetries`（单页最多尝试 4 次，失败页额外排队重试两轮）、
-`scrapeCleanAds`（默认 true；保守清理明确广告/签名行，删除内容写入抓取日志）
+| 类别 | 设置项 |
+| --- | --- |
+| 自动检查 | `enabled`、`ignoreBlankLines`、`excludedLanguages`、`silenceAfterSave` |
+| 标点与引号检查 | `shortLineCheck`、`shortLineMaxChars`、`quotePairCheck` |
+| 段落合并 | `indentStartsParagraph`、`smartParagraphs`、`keepBlankLines` |
+| 缩进与章节 | `indentString`、`indentSkipChapterTitles`、`indentNormalizeExisting`、`chapterPattern` |
+| 批量备份 | `batchBackup` |
+| cool18 | `cool18OutputRoot`、`cool18Proxy`、`cool18Delay`、`cool18MaxPages`、`cool18MaxRetries`、`scrapeCleanAds` |
+| Pixiv 连接 | `pixivOutputRoot`、`pixivCookie`、`pixivProxy`、`pixivIntervalMs`、`pixivConcurrency`、`pixivMaxRetries` |
+| Pixiv 输出 | `pixivPageSeparator`、`pixivRubyKeep`、`pixivSaveUrlNote`、`pixivSaveMeta`、`pixivRawCache` |
 
-旧插件配置兼容：`pixivNovel.*` 和 `cool18Novel.*` 里已设置的值会自动兜底生效。
+默认缩进为两个全角空格。`chapterPattern` 留空使用内置识别；自定义正则未命中的行仍可能进入内置上下文识别。
 
-## 源码结构
+Pixiv 请求起步间隔默认 1200ms 并带抖动，并发设置是请求层的上限；当前目标和章节下载流程依次执行，调高上限不保证加速。
 
-```
-novel-toolkit/
-├── extension.js         入口：依赖装配 + 编辑器事件接线（命令已按领域拆出）
-├── src/
-│   ├── core/
-│   │   └── editor.js    文档行读取、整篇替换、问题行跳转
-│   ├── commands/
-│   │   ├── navigation.js 检查/跳转/章节列表
-│   │   ├── organize.js   合并/缩进/空行/章节号/标点/繁简
-│   │   ├── encoding.js   编码检测/转码/自动识别
-│   │   ├── files.js      文件重命名
-│   │   ├── batch.js      文件夹批量整理/转码
-│   │   └── scrape.js     抓取命令（两个来源）
-│   ├── engine/
-│   │   ├── chapters.js   章节名识别（严格正则 + 上下文兜底）
-│   │   ├── transforms.js 文本变换与检测（纯函数）
-│   │   ├── encoding.js   编码检测/解码
-│   │   ├── zh-convert.js 繁简转换（OpenCC 数据驱动 + 简体零误伤）
-│   │   ├── cool18/       parse + fetcher + core
-│   │   └── pixiv/        fetcher/api/render/writer/parseInput/index
-│   ├── service/
-│   │   ├── checker.js    检查引擎（诊断/静音/防抖/状态栏）
-│   │   ├── scrape.js     抓取调度：任务闸门/日志/配置回退/Cookie
-│   │   └── batch.js      批量处理与原子写盘
-│   └── ui/
-│       ├── panel.js      面板管理（数据推送/光标跟踪/抓取消息）
-│       ├── panel-html.js 面板 HTML/CSS
-│       ├── panel-webview.js 面板行为脚本（data-* 事件委托）
-│       └── messages.js   面板消息白名单
-├── test/                 引擎/面板/接线/抓取测试
-└── README.md
-```
+输出目录和 Cookie 保留旧插件配置兜底。旧版 `pixivNovel.*` / `cool18Novel.*` 中的其他设置请在迁移时核对，当前命名空间的默认值可能优先生效。旧插件私密存储中的 Cookie 不互通，需要重新设置。
+
+## 源码与测试
+
+| 路径 | 职责 |
+| --- | --- |
+| `extension.js` | 服务装配、命令注册、编辑器事件 |
+| `src/core/`、`src/commands/` | 编辑器工具和按领域拆分的命令 |
+| `src/engine/` | 文本变换、章节识别、编码、繁简转换和站点抓取引擎 |
+| `src/service/` | 诊断、抓取调度、批量处理与写盘 |
+| `src/ui/` | Webview 页面、交互脚本与消息协议 |
+| `test/` | 引擎、离线抓取、面板、批量及命令测试 |
+
+运行 `npm test` 和 `node test/wiring-audit.js`。测试使用离线样例与模拟响应，不代表已验证站点当前可用性。
+
+繁简字表基于 OpenCC（Apache-2.0）数据并补充小说场景规则。插件采用 [MIT 许可证](LICENSE)。版本变化见 [更新记录](CHANGELOG.md)。
