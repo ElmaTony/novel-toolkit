@@ -15,9 +15,9 @@ module.exports = {
     'nextChapter', 'prevChapter',
     'cool18OpenOutput', 'cool18Search', 'showScrapeLog',
     'pixivSetCookie', 'pixivGrabUser', 'pixivUpdate', 'pixivOpenOutput', 'scrapeCancel',
-    'setupEncoding', 'detectEncoding', 'convertToUtf8', 'showHistory',
+    'showHistory',
     't2sFile',
-    'batchProcess', 'batchConvert',
+    'batchProcess',
   ],
 
   // 面板脚本发给主机的自定义消息（run 之外）
@@ -25,7 +25,7 @@ module.exports = {
     'refresh', 'chapter', 'scrapePreview',
     'cool18Grab', 'cool18GrabFile',
     'pixivGrab', 'pixivGrabFile', 'pixivCancel',
-    'setCookie', 'renameFile',
+    'setCookie', 'renameFile', 'openSettings',
   ],
 
   // 主机 → 面板 的推送类型

@@ -40,7 +40,8 @@ class PanelManager {
 
   // 面板按钮始终作用于最近编辑的文件
   editor() {
-    return vscode.window.activeTextEditor || this.lastEditor;
+    const editor = vscode.window.activeTextEditor || this.lastEditor;
+    return editor && !editor.document.isClosed ? editor : null;
   }
 
   reveal() {
@@ -88,13 +89,15 @@ class PanelManager {
       return;
     }
     const st = this.scrape.snapshot();
-    st.busy = this.scrape.busy;
-    st.taskText = this.scrape.busy ? '任务进行中…' : '';
     this.scrape.pixivCookie().then((c) => {
+      st.busy = this.scrape.busy;
+      st.taskText = this.scrape.taskText || '';
       st.cookieSet = !!c;
       st.cookieLen = c.length;
       this.post({ type: 'scrapeState', state: st });
     }, () => {
+      st.busy = this.scrape.busy;
+      st.taskText = this.scrape.taskText || '';
       st.cookieSet = false;
       this.post({ type: 'scrapeState', state: st });
     });
@@ -118,6 +121,10 @@ class PanelManager {
     }
     if (msg.command === 'chapter' && Number.isInteger(msg.line) && msg.line >= 0) {
       this.jump(msg.line);
+      return;
+    }
+    if (msg.command === 'openSettings') {
+      vscode.commands.executeCommand('workbench.action.openSettings', '@ext:localtools.novel-toolkit');
       return;
     }
     if (msg.command === 'scrapePreview') {
@@ -270,11 +277,13 @@ class PanelManager {
     if (!ed) {
       this.post({
         type: 'update', fileName: '（没有打开的文件）', chapters: [],
-        wsCount: -1, shortCount: -1, silenced: false
+        wsCount: -1, midCount: -1, shortCount: -1, quoteCount: -1,
+        silenced: false, hasDocument: false, dirty: false
       });
       return;
     }
     const doc = ed.document;
+    this.cursorLine = ed.selection.active.line;
     const cfg = vscode.workspace.getConfiguration('novelToolkit');
     const lines = [];
     for (let i = 0; i < doc.lineCount; i++) {
@@ -292,12 +301,14 @@ class PanelManager {
       fileName = doc.fileName.replace(/^.*[\\/]/, '');
     }
     let wsCount = -1;
+    let midCount = -1;
     let shortCount = -1;
     let quoteCount = -1;
     let silencedFlag = false;
     if (this.checker.appliesTo(doc)) {
       const c = this.checker.counts(doc.uri);
       wsCount = c.ws;
+      midCount = c.mid;
       shortCount = c.short;
       quoteCount = c.quote;
       silencedFlag = c.silenced;
@@ -307,9 +318,12 @@ class PanelManager {
       fileName: fileName,
       chapters: chs,
       wsCount: wsCount,
+      midCount: midCount,
       shortCount: shortCount,
       quoteCount: quoteCount,
-      silenced: silencedFlag
+      silenced: silencedFlag,
+      hasDocument: true,
+      dirty: doc.isDirty
     });
     this.postCursor();
   }

@@ -37,7 +37,7 @@ for (const k of (pkg.contributes.keybindings || [])) {
 }
 // 4) 代码读取的 novelToolkit 设置项必须在 package.json 声明
 //    （globalState 键不在 settings 里, 显式排除）
-const GLOBAL_STATE_KEYS = new Set(['encodingSetupDone', 'scrapeHistory']);
+const GLOBAL_STATE_KEYS = new Set(['scrapeHistory']);
 const cfgUsed = new Set();
 for (const src of [extSrc, engineSrc, serviceSrc, uiSrc]) {
   for (const m of src.matchAll(/\.get\(['"]novelToolkit\.([a-zA-Z0-9]+)['"]/g)) {

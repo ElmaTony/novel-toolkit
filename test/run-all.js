@@ -6,7 +6,7 @@
 const cp = require('child_process');
 const path = require('path');
 
-const suites = ['engine.test.js', 'cool18-core.test.js', 'panel.test.js', 'batch.test.js', 'commands.test.js'];
+const suites = ['engine.test.js', 'cool18-core.test.js', 'panel.test.js', 'panel-host.test.js', 'batch.test.js', 'commands.test.js'];
 let failed = 0;
 
 for (const s of suites) {

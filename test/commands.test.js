@@ -81,7 +81,6 @@ async function main() {
       if (failBatch) return Promise.reject(new Error('测试失败'));
       return new Promise((resolve) => { finishBatch = resolve; });
     }
-    convertFolder() { throw new Error('第二个任务不应启动'); }
   }
   vscode.Uri = { file: (fsPath) => ({ fsPath }) };
   vscode.window.showOpenDialog = async () => {
@@ -98,7 +97,7 @@ async function main() {
   const pending = commands.batchProcess();
   await Promise.resolve();
   eq(starts, 1, '批量任务已启动');
-  await commands.batchConvert();
+  await commands.batchProcess();
   eq(folderSelections, 1, '并行命令在选择文件前被拦截');
   eq(messages.pop(), '已有批量任务进行中，请等它完成或先取消', '并行命令提示当前任务进行中');
   let finishNotice;
@@ -115,7 +114,7 @@ async function main() {
   finishBatch({ total: 0, changed: 0, unchanged: 0, errors: [] });
   await atSummary;
   cancelFolder = true;
-  await commands.batchConvert();
+  await commands.batchProcess();
   eq(folderSelections, 2, '任务完成后无需关闭通知即可开始下一次任务');
   finishNotice();
   await pending;
@@ -124,7 +123,7 @@ async function main() {
   await assert.rejects(commands.batchProcess(), /测试失败/);
   pass++;
   cancelFolder = true;
-  await commands.batchConvert();
+  await commands.batchProcess();
   eq(folderSelections, 4, '任务异常后仍释放闸门');
 
   console.log('===== 命令测试：通过 ' + pass + '，失败 0 =====');

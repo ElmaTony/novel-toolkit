@@ -1,6 +1,6 @@
 'use strict';
 
-// 真实临时文件验证整理/转码、备份、幂等及事件循环中的取消。
+// 真实临时文件验证批量整理、备份、幂等及事件循环中的取消。
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -8,6 +8,12 @@ const assert = require('assert');
 const { BatchProcessor } = require('../src/service/batch');
 
 let pass = 0;
+const createdDirectories = [];
+function makeTemp(prefix) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  createdDirectories.push(directory);
+  return directory;
+}
 function eq(actual, expected, name) {
   assert.deepStrictEqual(actual, expected, name);
   pass++;
@@ -15,7 +21,7 @@ function eq(actual, expected, name) {
 
 async function main() {
   const batch = new BatchProcessor();
-  const bdir = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-batch-'));
+  const bdir = makeTemp('novel-batch-');
   fs.writeFileSync(path.join(bdir, 'a.txt'), '　　A。   B\n继续。\n', 'utf8');
   fs.writeFileSync(path.join(bdir, 'b.txt'), '　　已经是规范段落。\n', 'utf8');
   const bp = await batch.processFolder(bdir, { backup: true, indentString: '　　' });
@@ -28,15 +34,9 @@ async function main() {
   const backup = fs.readFileSync(path.join(bdir, 'a.txt.bak'));
   eq((await batch.processFolder(bdir, { backup: true })).changed, 0, '重复整理幂等');
   eq(fs.readFileSync(path.join(bdir, 'a.txt.bak')), backup, '保留最早的备份');
-  fs.writeFileSync(path.join(bdir, 'c.txt'), Buffer.from([0xB2, 0xE2, 0xCA, 0xD4]));
-  const bc = await batch.convertFolder(bdir, { backup: true });
-  eq(bc.converted, 1, 'GB2312 文件转码');
-  eq(fs.readFileSync(path.join(bdir, 'c.txt'), 'utf8'), '测试\n', '转码内容正确');
-  eq((await batch.convertFolder(bdir)).converted, 0, '重复转码幂等');
-
-  for (const method of ['processFolder', 'convertFolder']) {
+  for (const method of ['processFolder']) {
     for (const mode of ['token', 'abort', 'cancel']) {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-cancel-'));
+      const dir = makeTemp('novel-cancel-');
       const original = Buffer.from([0xB2, 0xE2, 0xCA, 0xD4]);
       for (let i = 0; i < 3; i++) fs.writeFileSync(path.join(dir, i + '.txt'), original);
       const worker = new BatchProcessor();
@@ -75,7 +75,7 @@ async function main() {
     }
 
     for (const signal of [{ isCancellationRequested: true }, AbortSignal.abort()]) {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'novel-precancel-'));
+      const dir = makeTemp('novel-precancel-');
       const file = path.join(dir, 'untouched.txt');
       fs.writeFileSync(file, '原始内容');
       const r = await batch[method](dir, { signal, backup: true });
@@ -92,4 +92,11 @@ async function main() {
 main().catch((e) => {
   console.error(e);
   process.exitCode = 1;
+}).finally(() => {
+  const root = path.resolve(os.tmpdir()) + path.sep;
+  for (const directory of createdDirectories) {
+    const target = path.resolve(directory);
+    if (!target.startsWith(root) || !path.basename(target).startsWith('novel-')) throw new Error('测试清理路径不正确');
+    fs.rmSync(target, { recursive: true, force: true });
+  }
 });

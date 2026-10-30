@@ -1,6 +1,6 @@
 'use strict';
 
-// 批量命令：文件夹批量整理 / 批量转码
+// 批量命令：文件夹批量整理
 const vscode = require('vscode');
 const path = require('path');
 const { BatchProcessor } = require('../service/batch');
@@ -15,13 +15,9 @@ function pickFolder(defaultPath) {
   });
 }
 
-function summarizeBatch(kind, r) {
-  const lines = [kind + '完成：共 ' + r.total + ' 个 txt'];
-  if (kind === '批量整理') {
-    lines.push('有改动 ' + r.changed + ' 个、已规范 ' + r.unchanged + ' 个');
-  } else {
-    lines.push('转码 ' + r.converted + ' 个、已是 UTF-8 ' + r.already + ' 个');
-  }
+function summarizeBatch(r) {
+  const lines = ['批量整理完成：共 ' + r.total + ' 个 txt'];
+  lines.push('有改动 ' + r.changed + ' 个、已规范 ' + r.unchanged + ' 个');
   if (r.errors.length) lines.push('出错 ' + r.errors.length + ' 个');
   if (r.cancelled) lines.push('（已取消）');
   return lines.join('，');
@@ -68,36 +64,13 @@ function registerBatchCommands({ reg, scrape, cfg }) {
     });
     if (!result) return;
     const { folder, r } = result;
-    scrape.log('批量整理: ' + summarizeBatch('批量整理', r) + ' → ' + folder);
+    scrape.log(summarizeBatch(r) + ' → ' + folder);
     const pick = await vscode.window.showInformationMessage(
-      summarizeBatch('批量整理', r), '打开文件夹', '查看日志');
-    if (pick === '打开文件夹') scrape.openOutput('cool18');
+      summarizeBatch(r), '打开文件夹', '查看日志');
+    if (pick === '打开文件夹') scrape.openOutputDir(folder);
     if (pick === '查看日志') scrape.showLog();
   });
 
-  reg('batchConvert', async () => {
-    const result = await runBatch(async () => {
-      const picks = await pickFolder(scrape.cool18OutputRoot());
-      if (!picks || !picks.length) return;
-      const folder = picks[0].fsPath;
-      const backup = cfg().get('batchBackup', true);
-      const r = await vscode.window.withProgress(
-        { location: vscode.ProgressLocation.Notification, title: '批量转码为 UTF-8', cancellable: true },
-        (progress, token) => batch.convertFolder(folder, {
-          backup,
-          signal: token,
-          onProgress: (file, encoding) => progress.report({ message: path.basename(file) + ' ← ' + encoding }),
-        })
-      );
-      return { folder, r };
-    });
-    if (!result) return;
-    const { folder, r } = result;
-    scrape.log('批量转码: ' + summarizeBatch('批量转码', r) + ' → ' + folder);
-    const pick = await vscode.window.showInformationMessage(
-      summarizeBatch('批量转码', r), '查看日志');
-    if (pick === '查看日志') scrape.showLog();
-  });
 }
 
 module.exports = { registerBatchCommands };

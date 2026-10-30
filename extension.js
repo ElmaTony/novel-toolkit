@@ -8,7 +8,6 @@ const { PanelManager } = require('./src/ui/panel');
 const { ScrapeManager } = require('./src/service/scrape');
 const { registerNavigationCommands } = require('./src/commands/navigation');
 const { registerOrganizeCommands } = require('./src/commands/organize');
-const { registerEncodingCommands, applyEncodingSettings } = require('./src/commands/encoding');
 const { registerFileCommands } = require('./src/commands/files');
 const { registerBatchCommands } = require('./src/commands/batch');
 const { registerScrapeCommands } = require('./src/commands/scrape');
@@ -26,7 +25,6 @@ function activate(context) {
 
   registerNavigationCommands({ reg, panel, checker, cfg });
   registerOrganizeCommands({ reg, panel, checker, cfg });
-  registerEncodingCommands({ reg, panel, scrape });
   registerFileCommands({ reg, panel, checker });
   registerBatchCommands({ reg, scrape, cfg });
   registerScrapeCommands({ reg, panel, scrape });
@@ -63,7 +61,7 @@ function activate(context) {
       panel.scheduleUpdate();
     }),
     vscode.window.onDidChangeTextEditorSelection((e) => {
-      if (e.selections && e.selections.length) {
+      if (e.textEditor === panel.editor() && e.selections && e.selections.length) {
         panel.onCursor(e.selections[0].active.line);
       }
     })
@@ -75,29 +73,6 @@ function activate(context) {
   }
   checker.refreshStatusBar();
 
-  // 一次性引导: 中文编码自动识别（GB2312/GBK 文件打开乱码的根治开关）
-  (async () => {
-    try {
-      if (context.globalState.get('novelToolkit.encodingSetupDone')) {
-        return;
-      }
-      const f = vscode.workspace.getConfiguration('files');
-      const candidates = f.get('candidateGuessEncodings', []);
-      if (f.get('autoGuessEncoding', false) && Array.isArray(candidates) && candidates.includes('gb18030')) {
-        context.globalState.update('novelToolkit.encodingSetupDone', true);
-        return;
-      }
-      const pick = await vscode.window.showWarningMessage(
-        '小说工具箱：检测到未开启中文编码自动识别——GB2312/GBK 编码的 txt 打开会乱码。一键开启？（全局设置，可随时关闭）',
-        '一键开启（推荐）', '暂不'
-      );
-      if (pick === '一键开启（推荐）') {
-        await applyEncodingSettings();
-        vscode.window.showInformationMessage('已开启编码自动识别：GB2312/GBK/GB18030/Big5/UTF-16 编码的 txt 将自动正确显示');
-      }
-      context.globalState.update('novelToolkit.encodingSetupDone', true);
-    } catch (e) { /* 引导失败不影响功能 */ }
-  })();
 }
 
 function deactivate() {}

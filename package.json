@@ -1,8 +1,8 @@
 {
   "name": "novel-toolkit",
   "displayName": "小说工具箱 Novel Toolkit",
-  "description": "网文整理一条龙：贴左检查+定位、合并段内换行、去缩进、章节名跳转/列表、批量添加首行缩进、批量整理/转码、cool18/Pixiv 抓取。检查只读不改；整理类命令仅手动触发。",
-  "version": "0.16.8",
+  "description": "纸墨主题的小说工具箱：空白、短行与引号检查，段落整理、繁简转换、章节导航、文件夹批量整理，以及 cool18/Pixiv 小说抓取。",
+  "version": "0.17.0",
   "publisher": "localtools",
   "license": "MIT",
   "repository": {
@@ -32,15 +32,15 @@
     "commands": [
       {
         "command": "novelToolkit.check",
-        "title": "小说工具箱: 检查当前文件（行首空白）"
+        "title": "小说工具箱: 检查当前文件（空白、短行、引号）"
       },
       {
         "command": "novelToolkit.nextProblem",
-        "title": "小说工具箱: 跳到下一处行首空白"
+        "title": "小说工具箱: 跳到下一处空白问题"
       },
       {
         "command": "novelToolkit.prevProblem",
-        "title": "小说工具箱: 跳到上一处行首空白"
+        "title": "小说工具箱: 跳到上一处空白问题"
       },
       {
         "command": "novelToolkit.merge",
@@ -103,18 +103,6 @@
         "title": "小说工具箱: 打开工具面板（功能按钮 + 章节列表）"
       },
       {
-        "command": "novelToolkit.setupEncoding",
-        "title": "小说工具箱: 一键启用中文编码自动识别（GB2312/GBK/GB18030/Big5）"
-      },
-      {
-        "command": "novelToolkit.detectEncoding",
-        "title": "小说工具箱: 检测当前文件编码"
-      },
-      {
-        "command": "novelToolkit.convertToUtf8",
-        "title": "小说工具箱: 当前文件转码为 UTF-8"
-      },
-      {
         "command": "novelToolkit.cool18Grab",
         "title": "小说工具箱: cool18 抓取（粘贴链接/ID，单链接自动爬全本）"
       },
@@ -165,10 +153,6 @@
       {
         "command": "novelToolkit.batchProcess",
         "title": "小说工具箱: 批量整理文件夹（合并换行→贴左→缩进）"
-      },
-      {
-        "command": "novelToolkit.batchConvert",
-        "title": "小说工具箱: 批量转码文件夹为 UTF-8"
       },
       {
         "command": "novelToolkit.showHistory",
@@ -315,7 +299,7 @@
         "novelToolkit.batchBackup": {
           "type": "boolean",
           "default": true,
-          "description": "批量整理/转码时先备份原文件为 .bak（推荐开启）"
+          "description": "批量整理时先备份原文件为 .bak（默认开启；已有备份不覆盖）"
         },
         "novelToolkit.cool18OutputRoot": {
           "type": "string",
@@ -329,7 +313,7 @@
         },
         "novelToolkit.cool18Delay": {
           "type": "number",
-          "default": 1.0,
+          "default": 1,
           "minimum": 0,
           "description": "cool18 相邻请求间隔秒数（实际会 ±20% 抖动；默认 1.0 秒）"
         },

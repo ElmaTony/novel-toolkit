@@ -1,297 +1,303 @@
+'use strict';
 
-  const vsapi = acquireVsCodeApi();
-  let data = { fileName: '…', chapters: [], wsCount: -1, shortCount: -1, silenced: false };
-  let scrape = { busy: false, taskText: '' };
-  let cursorLine = -1;
-  let lastScrollChapterLine = -1;
-  let taTimer = null;
+const vsapi = acquireVsCodeApi();
+const $ = (id) => document.getElementById(id);
+const initial = vsapi.getState ? vsapi.getState() || {} : {};
+const preferences = {
+  theme: ['auto', 'light', 'dark'].includes(initial.theme) ? initial.theme : 'auto',
+  tab: initial.tab === 'scrape' ? 'scrape' : 'organize',
+  source: initial.source === 'cool18' ? 'cool18' : 'pixiv',
+  search: typeof initial.search === 'string' ? initial.search : '',
+  moreOpen: !!initial.moreOpen,
+};
+let data = { fileName: '正在读取文件…', chapters: [], hasDocument: false, wsCount: -1, midCount: -1, shortCount: -1, quoteCount: -1, silenced: false };
+let scrape = { busy: false, taskText: '' };
+let cursorLine = -1;
+let lastScrollChapterLine = -1;
+const previewTimers = {};
 
-  function run(name) { vsapi.postMessage({ command: 'run', name: name }); }
-  function post(msg) { vsapi.postMessage(msg); }
+function post(message) { vsapi.postMessage(message); }
+function run(name) { post({ command: 'run', name }); }
+function savePreferences() { if (vsapi.setState) vsapi.setState(Object.assign({}, preferences)); }
 
-  function showTab(name) {
-    document.querySelectorAll('.tab').forEach(function (el) {
-      el.classList.toggle('active', el.dataset.tab === name);
+function applyTheme(announce) {
+  if (preferences.theme === 'auto') delete document.body.dataset.theme;
+  else document.body.dataset.theme = preferences.theme;
+  const label = { auto: '跟随 VS Code', light: '浅色纸墨', dark: '深色纸墨' }[preferences.theme];
+  $('themeButton').title = '主题：' + label + '（点击切换）';
+  $('themeButton').setAttribute('aria-label', '面板主题：' + label + '，点击切换');
+  if (announce) $('themeHint').textContent = '主题：' + label;
+}
+
+function showTab(name) {
+  preferences.tab = name === 'scrape' ? 'scrape' : 'organize';
+  document.querySelectorAll('[data-tab]').forEach((el) => el.setAttribute('aria-selected', String(el.dataset.tab === preferences.tab)));
+  $('tab-organize').hidden = preferences.tab !== 'organize';
+  $('tab-scrape').hidden = preferences.tab !== 'scrape';
+  savePreferences();
+}
+
+function showSource(source) {
+  preferences.source = source === 'cool18' ? 'cool18' : 'pixiv';
+  document.querySelectorAll('[data-source]').forEach((el) => el.setAttribute('aria-selected', String(el.dataset.source === preferences.source)));
+  $('source-pixiv').hidden = preferences.source !== 'pixiv';
+  $('source-cool18').hidden = preferences.source !== 'cool18';
+  savePreferences();
+}
+
+function updateDisabled() {
+  document.querySelectorAll('[data-doc]').forEach((el) => { el.disabled = !data.hasDocument; });
+  const issueCounts = { Ws: Math.max(0, data.wsCount) + Math.max(0, data.midCount || 0), Short: data.shortCount, Quote: data.quoteCount };
+  Object.keys(issueCounts).forEach((key) => {
+    $('row' + key).querySelectorAll('[data-run]').forEach((el) => {
+      el.disabled = !data.hasDocument || data.wsCount < 0 || (!data.silenced && issueCounts[key] === 0);
     });
-    document.getElementById('tab-organize').hidden = name !== 'organize';
-    document.getElementById('tab-scrape').hidden = name !== 'scrape';
-  }
+  });
+  document.querySelectorAll('[data-task-start]').forEach((el) => { el.disabled = scrape.busy || (el.hasAttribute('data-doc') && !data.hasDocument); });
+  $('forceGrab').disabled = scrape.busy;
+}
 
-  function currentChapterIndex() {
-    if (!data.chapters.length || cursorLine < 0) { return -1; }
-    let idx = -1;
-    for (let i = 0; i < data.chapters.length; i++) {
-      if (data.chapters[i].line <= cursorLine) { idx = i; } else { break; }
-    }
-    return idx;
-  }
+function renderIssues() {
+  const available = data.hasDocument && data.wsCount >= 0;
+  const counts = { Ws: Math.max(0, data.wsCount) + Math.max(0, data.midCount || 0), Short: data.shortCount, Quote: data.quoteCount };
+  Object.keys(counts).forEach((key) => {
+    const count = counts[key] || 0;
+    const row = $('row' + key);
+    const state = !available ? '' : data.silenced ? '' : count > 0 ? 'warn' : 'ok';
+    row.className = 'issue-row' + (state ? ' ' + state : '');
+    const mark = row.querySelector('.issue-mark');
+    if (mark) mark.textContent = state === 'warn' ? '!' : state === 'ok' ? '✓' : '—';
+    $('count' + key).textContent = !available ? '—' : data.silenced ? '已暂停' : count > 0 ? count + ' 处' : '已通过';
+  });
+}
 
-  function renderChips() {
-    const wsEl = document.getElementById('chipWs');
-    const shEl = document.getElementById('chipShort');
-    const qEl = document.getElementById('chipQuote');
-    const chEl = document.getElementById('chipCh');
-    if (data.wsCount < 0) {
-      wsEl.className = 'chip'; wsEl.textContent = '贴左 —';
-      shEl.className = 'chip'; shEl.textContent = '短行 —';
-      qEl.className = 'chip'; qEl.textContent = '引号 —';
-    } else if (data.silenced) {
-      wsEl.className = 'chip'; wsEl.textContent = '贴左 已静音';
-      shEl.className = 'chip'; shEl.textContent = '短行 已静音';
-      qEl.className = 'chip'; qEl.textContent = '引号 已静音';
+function currentChapterIndex() {
+  let index = -1;
+  for (let i = 0; i < data.chapters.length; i++) {
+    if (data.chapters[i].line > cursorLine) break;
+    index = i;
+  }
+  return index;
+}
+
+function emptyRow(text) {
+  const el = document.createElement('div');
+  el.className = 'empty';
+  el.textContent = text;
+  return el;
+}
+
+function chapterRow(entry, number, currentLine) {
+  const row = document.createElement('button');
+  row.type = 'button';
+  row.className = 'ch' + (entry.kind === 'volume' ? ' vol' : '') + (entry.line === currentLine ? ' current' : '');
+  row.dataset.line = entry.line;
+  row.setAttribute('aria-current', String(entry.line === currentLine));
+  row.title = entry.title + ' · 第 ' + (entry.line + 1) + ' 行';
+  const num = document.createElement('span');
+  num.className = 'num';
+  num.textContent = number === null ? '卷' : String(number).padStart(3, '0');
+  const title = document.createElement('span');
+  title.className = 't';
+  title.textContent = entry.title;
+  const line = document.createElement('span');
+  line.className = 'ln';
+  line.textContent = String(entry.line + 1);
+  row.appendChild(num);
+  row.appendChild(title);
+  row.appendChild(line);
+  return row;
+}
+
+function renderList() {
+  const box = $('chapters');
+  const query = $('search').value.trim().toLocaleLowerCase();
+  const chapterCount = data.chapters.filter((entry) => entry.kind !== 'volume').length;
+  const volumeCount = data.chapters.length - chapterCount;
+  $('chCount').textContent = data.chapters.length ? chapterCount + ' 章' + (volumeCount ? ' · ' + volumeCount + ' 卷' : '') : '';
+  box.innerHTML = '';
+  if (!data.chapters.length) {
+    box.appendChild(emptyRow(data.hasDocument ? '未识别到章节名，可在设置中调整识别规则' : '打开文稿后显示章节目录'));
+    return;
+  }
+  const groups = [{ volume: null, items: [] }];
+  let group = groups[0];
+  let chapterNumber = 0;
+  data.chapters.forEach((entry) => {
+    if (entry.kind === 'volume') {
+      group = { volume: entry, items: [] };
+      groups.push(group);
     } else {
-      wsEl.className = 'chip ' + (data.wsCount === 0 ? 'ok' : 'warn');
-      wsEl.textContent = data.wsCount === 0 ? '✓ 贴左' : '贴左 ' + data.wsCount;
-      shEl.className = 'chip ' + (data.shortCount === 0 ? 'ok' : 'warn');
-      shEl.textContent = data.shortCount === 0 ? '✓ 短行' : '短行 ' + data.shortCount;
-      qEl.className = 'chip ' + ((data.quoteCount || 0) === 0 ? 'ok' : 'warn');
-      qEl.textContent = (data.quoteCount || 0) === 0 ? '✓ 引号' : '引号 ' + data.quoteCount;
+      chapterNumber++;
+      group.items.push({ entry, number: chapterNumber });
     }
-    chEl.textContent = '章节 ' + data.chapters.filter(function (c) { return c.kind !== 'volume'; }).length;
-  }
+  });
+  const index = currentChapterIndex();
+  const currentLine = index >= 0 ? data.chapters[index].line : -1;
+  const fragment = document.createDocumentFragment();
+  let shown = 0;
+  groups.forEach((g) => {
+    const volumeMatch = !!g.volume && !!query && g.volume.title.toLocaleLowerCase().includes(query);
+    const items = g.items.filter((item) => !query || volumeMatch || item.entry.title.toLocaleLowerCase().includes(query) || String(item.number).padStart(3, '0').includes(query));
+    if (!items.length && !(g.volume && (!query || volumeMatch))) return;
+    if (g.volume) { fragment.appendChild(chapterRow(g.volume, null, currentLine)); shown++; }
+    items.forEach((item) => { fragment.appendChild(chapterRow(item.entry, item.number, currentLine)); shown++; });
+  });
+  if (shown) box.appendChild(fragment);
+  else box.appendChild(emptyRow('没有匹配的章节'));
+}
 
-  function renderList() {
-    const box = document.getElementById('chapters');
-    const q = document.getElementById('search').value.trim();
-    const nCh = data.chapters.filter(function (c) { return c.kind !== 'volume'; }).length;
-    const nVol = data.chapters.length - nCh;
-    document.getElementById('chCount').textContent = data.chapters.length
-      ? '(' + nCh + ' 章' + (nVol ? ' · ' + nVol + ' 卷' : '') + ')'
-      : '';
-    box.innerHTML = '';
-    if (!data.chapters.length) {
-      box.appendChild(emptyRow('未识别到章节名（可调整 novelToolkit.chapterPattern）'));
-      return;
+function highlightCurrent(autoScroll) {
+  const index = currentChapterIndex();
+  const line = index >= 0 ? data.chapters[index].line : -1;
+  document.querySelectorAll('.ch').forEach((el) => {
+    const current = Number(el.dataset.line) === line;
+    el.classList.toggle('current', current);
+    el.setAttribute('aria-current', String(current));
+  });
+  if (autoScroll && line >= 0 && line !== lastScrollChapterLine && preferences.tab === 'organize') {
+    const row = document.querySelector('.ch[data-line="' + line + '"]');
+    if (row) {
+      lastScrollChapterLine = line;
+      row.scrollIntoView({ block: 'nearest' });
     }
-    // 卷-章分组: 卷为组头, 卷之前的内容为第一组
-    const groups = [];
-    let group = { vol: null, items: [] };
-    groups.push(group);
-    for (const e of data.chapters) {
-      if (e.kind === 'volume') {
-        group = { vol: e, items: [] };
-        groups.push(group);
-      } else {
-        group.items.push(e);
-      }
-    }
-    const shownGroups = groups
-      .map(function (g) {
-        return { vol: g.vol, items: g.items.filter(function (c) { return !q || c.title.indexOf(q) >= 0; }) };
-      })
-      .filter(function (g) {
-        return g.items.length || (g.vol && (!q || g.vol.title.indexOf(q) >= 0));
-      });
-    if (!shownGroups.length) {
-      box.appendChild(emptyRow('没有匹配的章节'));
-      return;
-    }
-    const cur = currentChapterIndex();
-    const curLine = cur >= 0 ? data.chapters[cur].line : -1;
-    const frag = document.createDocumentFragment();
-    let chNo = 0;
-    shownGroups.forEach(function (g) {
-      if (g.vol) {
-        frag.appendChild(makeRow(g.vol, null, curLine));
-      }
-      g.items.forEach(function (c) {
-        if (c.kind !== 'volume') { chNo++; }
-        frag.appendChild(makeRow(c, c.kind === 'volume' ? null : chNo, curLine));
-      });
-    });
-    box.appendChild(frag);
   }
+}
 
-  function emptyRow(text) {
-    const d = document.createElement('div');
-    d.className = 'empty';
-    d.textContent = text;
-    return d;
-  }
+function render() {
+  $('fileName').textContent = data.fileName;
+  $('fileStatus').textContent = !data.hasDocument ? '' : data.dirty ? '未保存' : '已保存';
+  renderIssues();
+  renderList();
+  updateDisabled();
+}
 
-  function makeRow(e, chNo, curLine) {
+function renderScrape(state) {
+  $('cool18Meta').textContent = '输出：' + state.cool18Out + ' · 代理：' + state.cool18Proxy;
+  $('pixivMeta').textContent = '输出：' + state.pixivOut + ' · 代理：' + state.pixivProxy;
+  $('cookieChip').textContent = state.cookieSet ? 'Cookie 已设置' : 'Cookie 未设置';
+  $('cookieChip').className = 'cookie ' + (state.cookieSet ? 'ok' : 'warn');
+  const series = state.series || [];
+  $('seriesCount').textContent = series.length ? String(series.length) : '';
+  const box = $('series');
+  box.innerHTML = '';
+  if (!series.length) { box.appendChild(emptyRow('还没有已抓系列，粘贴系列链接即可开始')); return; }
+  series.forEach((entry) => {
     const row = document.createElement('div');
-    row.className = 'ch' + (e.kind === 'volume' ? ' vol' : '') + (e.line === curLine ? ' current' : '');
-    row.dataset.line = e.line;
-    const num = document.createElement('span');
-    num.className = 'num';
-    num.textContent = chNo === null ? '卷' : String(chNo).padStart(3, '0');
-    const t = document.createElement('span');
-    t.className = 't';
-    t.textContent = e.title;
-    t.title = e.title;
-    const ln = document.createElement('span');
-    ln.className = 'ln';
-    ln.textContent = '第 ' + (e.line + 1) + ' 行';
-    row.appendChild(num);
-    row.appendChild(t);
-    row.appendChild(ln);
-    row.onclick = function () { post({ command: 'chapter', line: e.line }); };
-    return row;
-  }
-
-  function render() {
-    document.getElementById('fileName').textContent = data.fileName;
-    renderChips();
-    renderList();
-  }
-
-  function highlightCurrent(autoScroll) {
-    const cur = currentChapterIndex();
-    const curLine = cur >= 0 ? data.chapters[cur].line : -1;
-    document.querySelectorAll('.ch.current').forEach(function (el) { el.classList.remove('current'); });
-    if (curLine >= 0) {
-      const el = document.querySelector('.ch[data-line="' + curLine + '"]');
-      if (el) {
-      el.classList.add('current');
-      if (autoScroll && curLine !== lastScrollChapterLine) {
-        lastScrollChapterLine = curLine;
-        el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      }
-    }
-    }
-  }
-
-  function locateCurrent() {
-    const el = document.querySelector('.ch.current');
-    if (el) {
-      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    }
-  }
-
-  function renderScrape(st) {
-    document.getElementById('cool18Meta').textContent =
-      '输出: ' + st.cool18Out + ' · 代理: ' + st.cool18Proxy;
-    document.getElementById('pixivMeta').textContent =
-      '输出: ' + st.pixivOut + ' · 代理: ' + st.pixivProxy;
-    const chip = document.getElementById('cookieChip');
-    chip.textContent = st.cookieSet ? 'Cookie 已设置' : 'Cookie 未设置';
-    chip.className = 'chip ' + (st.cookieSet ? 'ok' : 'warn');
-    const box = document.getElementById('series');
-    document.getElementById('seriesCount').textContent =
-      st.series.length ? '(' + st.series.length + ')' : '';
-    box.innerHTML = '';
-    if (!st.series.length) {
-      const d = document.createElement('div');
-      d.className = 'empty';
-      d.textContent = '还没有抓过系列 —— 粘贴系列链接点「开始抓取」试试';
-      box.appendChild(d);
-      return;
-    }
-    st.series.forEach(function (s) {
-      const row = document.createElement('div');
-      row.className = 'srow';
-      const t = document.createElement('span');
-      t.className = 'st';
-      t.textContent = '《' + s.title + '》';
-      t.title = s.title;
-      const m = document.createElement('span');
-      m.className = 'sm';
-      m.textContent = (s.author || '?') + ' · ' + s.count + ' 话';
-      row.appendChild(t);
-      row.appendChild(m);
-      box.appendChild(row);
-    });
-  }
-
-  function renderTask() {
-    const dot = document.getElementById('taskDot');
-    const txt = document.getElementById('taskText');
-    const btn = document.getElementById('cancelBtn');
-    dot.className = 'dot' + (scrape.busy ? ' busy' : '');
-    txt.textContent = scrape.busy ? (scrape.taskText || '任务进行中…') : '空闲';
-    txt.title = scrape.busy ? scrape.taskText : '';
-    btn.hidden = !scrape.busy;
-  }
-
-  function cool18Grab(deep) {
-    post({ command: 'cool18Grab', deep: deep, text: document.getElementById('cool18Input').value });
-  }
-  function pixivGrab() {
-    post({ command: 'pixivGrab', text: document.getElementById('pixivInput').value, force: forceGrabOn() });
-  }
-  function pixivGrabFile() {
-    post({ command: 'pixivGrabFile', force: forceGrabOn() });
-  }
-  function forceGrabOn() {
-    const el = document.getElementById('forceGrab');
-    return !!(el && el.checked);
-  }
-  function clearForceGrab() {
-    const el = document.getElementById('forceGrab');
-    if (el) { el.checked = false; }
-  }
-
-  function bindTa(id, kind) {
-    document.getElementById(id).addEventListener('input', function () {
-      if (taTimer) clearTimeout(taTimer);
-      const text = this.value;
-      taTimer = setTimeout(function () {
-        post({ command: 'scrapePreview', kind: kind, text: text });
-      }, 300);
-    });
-  }
-  bindTa('cool18Input', 'cool18');
-  bindTa('pixivInput', 'pixiv');
-
-  document.getElementById('fileName').addEventListener('click', function () {
-    post({ command: 'renameFile' });
+    row.className = 'srow';
+    const book = document.createElement('span');
+    book.className = 'book';
+    book.setAttribute('aria-hidden', 'true');
+    book.textContent = '文';
+    const description = document.createElement('div');
+    const title = document.createElement('div');
+    title.className = 'st';
+    title.textContent = entry.title;
+    const meta = document.createElement('div');
+    meta.className = 'sm';
+    meta.textContent = (entry.author || '未知作者') + ' · ' + entry.count + ' 话';
+    description.appendChild(title);
+    description.appendChild(meta);
+    row.appendChild(book);
+    row.appendChild(description);
+    box.appendChild(row);
   });
+}
 
-  document.getElementById('search').addEventListener('input', renderList);
+function renderTask() {
+  $('taskDot').className = 'dot' + (scrape.busy ? ' busy' : '');
+  $('taskText').textContent = scrape.taskText || (scrape.busy ? '任务进行中…' : '就绪');
+  $('cancelBtn').hidden = !scrape.busy;
+  const progress = $('taskProgress');
+  const match = scrape.taskText.match(/^(?:\[)?(\d+)\/(\d+)(?:\])?/);
+  const determinate = !!match && Number(match[2]) > 0;
+  progress.hidden = !scrape.busy;
+  progress.className = 'progress' + (determinate ? '' : ' indeterminate');
+  if (determinate) {
+    const percent = Math.max(0, Math.min(100, Number(match[1]) / Number(match[2]) * 100));
+    $('taskProgressFill').style.width = percent + '%';
+    progress.setAttribute('aria-valuemin', '0');
+    progress.setAttribute('aria-valuemax', '100');
+    progress.setAttribute('aria-valuenow', String(Math.round(percent)));
+  } else {
+    $('taskProgressFill').style.width = '';
+    progress.removeAttribute('aria-valuenow');
+  }
+  updateDisabled();
+}
 
-  // 统一事件委托：CSP nonce 策略下部分 Chromium 会禁止行内 onclick，
-  // 因此 panel-html.js 改用 data-* 属性，所有交互在这里绑定。
-  document.body.addEventListener('click', function (e) {
-    const el = e.target.closest('[data-tab], [data-run], [data-host], [data-cool18-deep], [data-pixiv-grab], [data-action]');
-    if (!el) { return; }
-    if (el.dataset.tab) {
-      showTab(el.dataset.tab);
-      return;
-    }
-    if (el.dataset.run) {
-      run(el.dataset.run);
-      return;
-    }
-    if (el.dataset.host) {
-      post({ command: el.dataset.host });
-      return;
-    }
-    if (el.dataset.cool18Deep !== undefined) {
-      cool18Grab(el.dataset.cool18Deep === 'true');
-      return;
-    }
-    if (el.dataset.pixivGrab !== undefined) {
-      pixivGrab();
-      return;
-    }
-    if (el.dataset.action === 'locate') {
-      locateCurrent();
-    }
+function start(message) {
+  if (scrape.busy) return;
+  scrape = { busy: true, taskText: '正在准备抓取…' };
+  renderTask();
+  post(message);
+}
+
+function forceGrabOn() { return !!$('forceGrab').checked; }
+function pixivGrabFile() { start({ command: 'pixivGrabFile', force: forceGrabOn() }); }
+
+function bindPreview(id, kind) {
+  $(id).addEventListener('input', function () {
+    if (previewTimers[kind]) clearTimeout(previewTimers[kind]);
+    const text = this.value;
+    previewTimers[kind] = setTimeout(() => { post({ command: 'scrapePreview', kind, text }); }, 300);
   });
+}
+bindPreview('pixivInput', 'pixiv');
+bindPreview('cool18Input', 'cool18');
+$('search').value = preferences.search;
+$('search').addEventListener('input', () => { preferences.search = $('search').value; savePreferences(); renderList(); });
+$('moreTools').open = preferences.moreOpen;
+$('moreTools').addEventListener('toggle', () => { preferences.moreOpen = $('moreTools').open; savePreferences(); });
 
-  window.addEventListener('message', function (e) {
-    const m = e.data;
-    if (!m) { return; }
-    if (m.type === 'update') {
-      data = m;
-      render();
-    } else if (m.type === 'cursor') {
-      cursorLine = m.line;
-      highlightCurrent(true);
-    } else if (m.type === 'scrapeState') {
-      scrape = { busy: !!m.state.busy, taskText: m.state.taskText || '' };
-      renderScrape(m.state);
-      renderTask();
-    } else if (m.type === 'scrapePreview') {
-      const el = document.getElementById(m.kind === 'cool18' ? 'cool18Preview' : 'pixivPreview');
-      if (el) { el.textContent = m.text; }
-    } else if (m.type === 'task') {
-      scrape = { busy: !!m.running, taskText: m.text || '' };
-      if (!m.running) { clearForceGrab(); }
-      renderTask();
-      if (!m.running) { vsapi.postMessage({ command: 'refresh' }); }
-    }
-  });
+document.body.addEventListener('click', (event) => {
+  const el = event.target.closest('button');
+  if (!el || el.disabled) return;
+  if (el.dataset.tab) { showTab(el.dataset.tab); return; }
+  if (el.dataset.source) { showSource(el.dataset.source); return; }
+  if (el.dataset.line !== undefined) { post({ command: 'chapter', line: Number(el.dataset.line) }); return; }
+  if (el.dataset.run) { run(el.dataset.run); return; }
+  if (el.dataset.host === 'pixivGrabFile') { pixivGrabFile(); return; }
+  if (el.dataset.host) { post({ command: el.dataset.host }); return; }
+  if (el.dataset.cool18Deep !== undefined) { start({ command: 'cool18Grab', deep: el.dataset.cool18Deep === 'true', text: $('cool18Input').value }); return; }
+  if (el.dataset.pixivGrab !== undefined) { start({ command: 'pixivGrab', text: $('pixivInput').value, force: forceGrabOn() }); return; }
+  if (el.dataset.action === 'theme') {
+    preferences.theme = { auto: 'light', light: 'dark', dark: 'auto' }[preferences.theme];
+    applyTheme(true);
+    savePreferences();
+  } else if (el.dataset.action === 'locate') {
+    const row = document.querySelector('.ch.current');
+    if (row) row.scrollIntoView({ block: 'center' });
+  }
+});
 
-  vsapi.postMessage({ command: 'refresh' });
+window.addEventListener('message', (event) => {
+  const message = event.data;
+  if (!message) return;
+  if (message.type === 'update') {
+    data = Object.assign({}, data, message);
+    render();
+  } else if (message.type === 'cursor') {
+    cursorLine = message.line;
+    highlightCurrent(true);
+  } else if (message.type === 'scrapeState') {
+    scrape = { busy: !!message.state.busy, taskText: message.state.taskText || '' };
+    renderScrape(message.state);
+    renderTask();
+  } else if (message.type === 'scrapePreview') {
+    const el = $(message.kind === 'cool18' ? 'cool18Preview' : 'pixivPreview');
+    el.textContent = message.text;
+  } else if (message.type === 'task') {
+    const wasBusy = scrape.busy;
+    scrape = { busy: !!message.running, taskText: message.text || '' };
+    if (!message.running && wasBusy) $('forceGrab').checked = false;
+    renderTask();
+    if (!message.running && wasBusy) post({ command: 'refresh' });
+  }
+});
+
+applyTheme(false);
+showTab(preferences.tab);
+showSource(preferences.source);
+updateDisabled();
+post({ command: 'refresh' });

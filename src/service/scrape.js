@@ -29,6 +29,7 @@ class ScrapeManager {
     this.context = context;
     this.channel = vscode.window.createOutputChannel('小说工具箱·抓取');
     this.active = null; // { label, controller }
+    this.taskText = '';
     this.onTask = null; // (running, text) => void —— 面板任务行
     this.lastCool18Out = '';
   }
@@ -38,6 +39,7 @@ class ScrapeManager {
   }
 
   task(running, text) {
+    this.taskText = text || '';
     if (this.onTask) {
       this.onTask(running, text);
     }
@@ -146,6 +148,7 @@ class ScrapeManager {
     const controller = new AbortController();
     if (token) token.onCancellationRequested(() => controller.abort());
     this.active = { label: 'cool18', controller };
+    this.task(true, '正在连接 cool18…');
     let result = null;
     try {
       this.log('开始: ' + entries.length + ' 个链接, 模式=' + (deep ? '自动爬全本' : '按列表顺序') +
@@ -187,6 +190,7 @@ class ScrapeManager {
       }
       if (result.aborted) msg += '（已中断，仅保存已抓部分）';
     }
+    this.task(false, msg);
     if (reporter) reporter.finish(result.error ? null : result, msg);
     return { msg, result };
   }
@@ -220,6 +224,7 @@ class ScrapeManager {
     const controller = new AbortController();
     if (token) token.onCancellationRequested(() => controller.abort());
     this.active = { label: 'pixiv', controller };
+    this.task(true, '正在连接 Pixiv…');
     const saved = [];
     const failures = [];
     let authError = false;
@@ -280,6 +285,7 @@ class ScrapeManager {
       this.active = null;
     }
     const out = { saved, failures, aborted: controller.signal.aborted, authError };
+    this.task(false, this.summarizePixiv(out));
     if (reporter) reporter.finish(out, this.summarizePixiv(out));
     return out;
   }
@@ -310,6 +316,7 @@ class ScrapeManager {
     const controller = new AbortController();
     if (token) token.onCancellationRequested(() => controller.abort());
     this.active = { label: 'pixiv-update', controller };
+    this.task(true, '正在检查 Pixiv 系列更新…');
     const updates = [];
     const failures = [];
     let authError = false;
@@ -341,6 +348,7 @@ class ScrapeManager {
     const msg = updates.length
       ? '更新完成：' + updates.map((u) => '《' + u.title + '》+' + (u.newCount - u.oldCount) + '章').join('、')
       : '全部已抓系列均无更新';
+    this.task(false, msg);
     reporter && reporter.finish({ updates }, msg);
     return { updates, failures, authError, msg };
   }
@@ -365,7 +373,7 @@ class ScrapeManager {
     }
     return {
       busy: this.busy,
-      taskText: this.busy ? '任务进行中…' : '',
+      taskText: this.taskText,
       cool18Out: this.cool18OutputRoot(),
       cool18Proxy: trim(pick(CFG().get('cool18Proxy'), OLD_COOL18().get('proxy', 'http://127.0.0.1:7897'))) || '直连',
       pixivOut: this.pixivOutputRoot(),
