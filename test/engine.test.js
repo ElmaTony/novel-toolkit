@@ -407,6 +407,11 @@ console.log('== 空白检查 scanLines');
   eq(r2.mid.length, 1, '空白: 单行也能检出汉字间空格');
   const r3 = t.scanLines(['他\u3000说'], {});
   eq(r3.mid.length, 0, '空白: 行中全角空格不报（保守，避免碰缩进语义）');
+  const r4 = t.scanLines(['　　他 说\t她  来  ', '他 说', '她 来'], {});
+  eq(JSON.stringify(r4.mid.filter((m) => m.line === 0).map((m) => [m.col, m.len])),
+    '[[3,1],[5,1],[7,2],[10,2]]', '空白: 同行多处空格及行尾空格全部定位');
+  eq(r4.mid.length, 6, '空白: 连续多行扫描不遗漏匹配');
+  eq(t.scanLines(['中文 English 单词之间'], {}).mid.length, 0, '空白: 全量扫描仍保留中英间合法空格');
 }
 
 
@@ -583,27 +588,6 @@ check('chapterKey-v5: 同章上下排序 上<下',
 check('chapterKey-v5: 同章上下是不同键（不触发去重互删）',
   c18.chapterKey('（5上）', 11).slice(0, 3).join() !== c18.chapterKey('（5下）', 12).slice(0, 3).join());
 
-  // 批量处理服务: 整理流水线 + 转码
-  const { BatchProcessor } = require('../src/service/batch');
-  const batch = new BatchProcessor();
-  const bdir = fs.mkdtempSync(path.join(os.tmpdir(), 'batch-'));
-  fs.writeFileSync(path.join(bdir, "a.txt"), "　　A。   B\n继续。\n", "utf8");
-  fs.writeFileSync(path.join(bdir, "b.txt"), "　　已经是规范段落。\n", "utf8");
-  const bp = batch.processFolder(bdir, { backup: true, indentString: '　　' });
-  eq(bp.total, 2, '批量: 扫描 2 个文件');
-  eq(bp.changed, 2, '批量: 全部归一为规范格式（含行尾/BOM）');
-  const aOut = fs.readFileSync(path.join(bdir, "a.txt"), "utf8").replace(/^\ufeff/, "").replace(/\r\n/g, "\n");
-  eq(aOut, "　　A。\n　　B继续。\n", "批量: a.txt 接缝拆分+合并+缩进");
-  ok(fs.existsSync(path.join(bdir, "a.txt.bak")), "批量: 改动文件有 .bak");
-  ok(fs.existsSync(path.join(bdir, "b.txt.bak")), "批量: 归一文件也有 .bak");
-  const bp2 = batch.processFolder(bdir, { backup: true, indentString: '　　' });
-  eq(bp2.changed, 0, '批量: 已规范文件幂等');
-  fs.writeFileSync(path.join(bdir, "c.txt"), Buffer.from([0xB2, 0xE2, 0xCA, 0xD4]), "binary");
-  const bc = batch.convertFolder(bdir, { backup: true });
-  eq(bc.converted, 1, '转码: GB2312 文件转 1 个');
-  eq(fs.readFileSync(path.join(bdir, "c.txt"), "utf8"), "测试\n", "转码: 内容正确");
-  const bc2 = batch.convertFolder(bdir, {});
-  eq(bc2.converted, 0, '转码: 幂等');
   // 缺章检测
   const { findGaps } = require('../src/engine/cool18/core');
   eq(findGaps([{ key: [0, 1, 0, 1, 5], cover: { vol: 0, a: 1, b: 5 } }, { key: [0, 7, 0, 2, 9], cover: { vol: 0, a: 7, b: 9 } }]).join('|'), '第 0 卷缺 6 章', 'findGaps: 中间缺一章');

@@ -83,6 +83,13 @@ ok('HTML 注入脚本与 panel-script 模块一致', !!m && m[1].trim() === webv
 // 4) 一致性: 脚本里引用的每个命令都必须在协议白名单里
 const src = webviewScript;
 const used = new Set();
+// 按钮命令来自 HTML 的 data-* 属性，也必须检查，避免按钮被主机静默拒绝。
+for (const m of html.matchAll(/data-run="([^"]+)"/g)) {
+  used.add('run:' + m[1]);
+}
+for (const m of html.matchAll(/data-host="([^"]+)"/g)) {
+  used.add(m[1]);
+}
 for (const m of src.matchAll(/run\('([^']+)'\)/g)) {
   used.add('run:' + m[1]);
 }

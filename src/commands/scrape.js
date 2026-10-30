@@ -164,7 +164,14 @@ function registerScrapeCommands({ reg, panel, scrape }) {
       ignoreFocusOut: true,
     });
     if (!input) return;
-    await runPixiv(scrape, parsePixivInput(input), 'Pixiv 抓取（作者全量）');
+    const trimmed = input.trim();
+    const targets = /^\d+$/.test(trimmed)
+      ? [{ type: 'user', id: trimmed }]
+      : parsePixivInput(trimmed).filter((target) => target.type === 'user');
+    if (!targets.length) {
+      return vscode.window.showInformationMessage('没有识别到 Pixiv 作者主页链接或作者 ID');
+    }
+    await runPixiv(scrape, targets, 'Pixiv 抓取（作者全量）');
   });
 
   reg('pixivUpdate', async () => {

@@ -6,3 +6,11 @@ test-out.txt
 .git/**
 tmp-*/
 tmp-*/**
+AGENTS.md
+CONTRIBUTING.md
+preview/**
+scripts/**
+.agents/**
+.codex/**
+*.bak
+*.tmp

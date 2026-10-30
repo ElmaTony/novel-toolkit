@@ -13,6 +13,11 @@ const { decodeToUtf8 } = require('../engine/encoding');
 const TXT_RE = /\.txt$/i;
 const BAK_RE = /\.bak$/i;
 
+// 同时接受 AbortSignal 和 VS Code CancellationToken。
+const isCancelled = (signal) => !!(signal && (signal.aborted || signal.isCancellationRequested));
+// 文件之间让出事件循环，宿主才能接收取消事件并更新进度。
+const yieldToHost = () => new Promise((resolve) => setImmediate(resolve));
+
 function walkTxt(dir, out) {
   for (const name of fs.readdirSync(dir)) {
     const p = path.join(dir, name);
@@ -124,11 +129,12 @@ class BatchProcessor {
   }
 
   // 批量整理: 返回 { total, changed, unchanged, errors, needsReview[] }
-  processFolder(folder, opts = {}) {
+  async processFolder(folder, opts = {}) {
     const files = this.list(folder);
     const results = { total: files.length, changed: 0, unchanged: 0, errors: [], needsReview: [], files: [] };
     for (const file of files) {
-      if (this.cancelled || (opts.signal && opts.signal.aborted)) {
+      await yieldToHost();
+      if (this.cancelled || isCancelled(opts.signal)) {
         results.cancelled = true;
         break;
       }
@@ -147,11 +153,12 @@ class BatchProcessor {
   }
 
   // 批量转码: 只做编码归一（不整理排版），非 UTF-8 全部转存 UTF-8
-  convertFolder(folder, opts = {}) {
+  async convertFolder(folder, opts = {}) {
     const files = this.list(folder);
     const results = { total: files.length, converted: 0, already: 0, errors: [], skipped: [], files: [] };
     for (const file of files) {
-      if (this.cancelled || (opts.signal && opts.signal.aborted)) {
+      await yieldToHost();
+      if (this.cancelled || isCancelled(opts.signal)) {
         results.cancelled = true;
         break;
       }

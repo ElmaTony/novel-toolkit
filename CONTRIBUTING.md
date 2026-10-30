@@ -25,7 +25,7 @@ scripts/update.js         打包并安装到 VSCode
 改完任何命令 / 设置 / 面板后，必跑：
 
 ```bash
-node test/run-all.js        # 引擎 + cool18 + 面板
+node test/run-all.js        # 引擎 + cool18 + 面板 + 批量 + 命令
 node test/wiring-audit.js   # 命令 / 设置 / 快捷键接线
 ```
 
@@ -44,6 +44,8 @@ npm run update   # 等价于 node scripts/update.js
 - 新增设置项时同步更新 `package.json` 和 `README.md`
 
 ## 发版流程（每次更新固定步骤）
+
+用户已授权每次更新后自动完成测试、清理、安装到本机 VSCode、推送源码与版本标签，以及打包上传 GitHub Release。不要停在源码修改，也不要让用户再手动安装。完成后核实本地安装版本和远端发行版附件，保持工作树干净。具体工作约定见 `AGENTS.md`。
 
 1. **改代码 → 测试**：`node test/run-all.js` + `node test/wiring-audit.js` 全绿
 2. **升版本**：`package.json` version 递增，`CHANGELOG.md` 记一条

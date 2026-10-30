@@ -14,7 +14,7 @@ module.exports = {
     'nextQuote', 'prevQuote',
     'nextChapter', 'prevChapter',
     'cool18OpenOutput', 'cool18Search', 'showScrapeLog',
-    'pixivSetCookie', 'pixivGrabUser', 'pixivUpdate', 'scrapeCancel',
+    'pixivSetCookie', 'pixivGrabUser', 'pixivUpdate', 'pixivOpenOutput', 'scrapeCancel',
     'setupEncoding', 'detectEncoding', 'convertToUtf8', 'showHistory',
     't2sFile',
     'batchProcess', 'batchConvert',

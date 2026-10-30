@@ -9,7 +9,7 @@ const WORDISH_RE = /[\w\u4e00-\u9fff\u3400-\u4dbf]/;
 //   汉字之间夹半角空格（"他 说"）→ 几乎必为复制/排版残留
 //   行尾空格/制表符 → 隐藏脏数据
 // 英文单词间空格、中英文之间的空格不报（排版规范允许）
-const MID_SPACE_RE = /[\u4E00-\u9FFF]([ \t]+)(?=[\u4E00-\u9FFF])/;
+const MID_SPACE_RE = /[\u4E00-\u9FFF]([ \t]+)(?=[\u4E00-\u9FFF])/g;
 const TRAIL_SPACE_RE = /[ \t]+$/;
 
 const isBlank = (text) => text.trim() === '';
@@ -116,8 +116,7 @@ function scanLines(lines, opts) {
     }
     if (!blank) {
       // 正文内空格: 汉字间半角空格 / 行尾空格（行首缩进由下面的 ws 检查负责）
-      const ms = text.match(MID_SPACE_RE);
-      if (ms) {
+      for (const ms of text.matchAll(MID_SPACE_RE)) {
         mid.push({ line: i, col: ms.index + 1, len: ms[1].length, desc: '正文汉字之间有空格' });
       }
       const ts = text.match(TRAIL_SPACE_RE);

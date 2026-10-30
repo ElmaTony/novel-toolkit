@@ -29,17 +29,29 @@ function summarizeBatch(kind, r) {
 
 function registerBatchCommands({ reg, scrape, cfg }) {
   const batch = new BatchProcessor();
+  let running = false;
+  const runBatch = async (action) => {
+    if (running) {
+      vscode.window.showInformationMessage('已有批量任务进行中，请等它完成或先取消');
+      return;
+    }
+    running = true;
+    try {
+      return await action();
+    } finally {
+      running = false;
+    }
+  };
 
   reg('batchProcess', async () => {
-    const picks = await pickFolder(scrape.cool18OutputRoot());
-    if (!picks || !picks.length) return;
-    const folder = picks[0].fsPath;
-    const backup = cfg().get('batchBackup', true);
-    let r = null;
-    await vscode.window.withProgress(
-      { location: vscode.ProgressLocation.Notification, title: '批量整理（合并换行→贴左→缩进）', cancellable: true },
-      async (progress, token) => {
-        r = await batch.processFolder(folder, {
+    const result = await runBatch(async () => {
+      const picks = await pickFolder(scrape.cool18OutputRoot());
+      if (!picks || !picks.length) return;
+      const folder = picks[0].fsPath;
+      const backup = cfg().get('batchBackup', true);
+      const r = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: '批量整理（合并换行→贴左→缩进）', cancellable: true },
+        (progress, token) => batch.processFolder(folder, {
           backup,
           signal: token,
           indentStartsParagraph: cfg().get('indentStartsParagraph', true),
@@ -50,9 +62,12 @@ function registerBatchCommands({ reg, scrape, cfg }) {
           normalizeExisting: cfg().get('indentNormalizeExisting', true),
           chapterPattern: cfg().get('chapterPattern'),
           onProgress: (file, res) => progress.report({ message: path.basename(file) + ' → ' + (res.changed ? '已整理' : '无改动') }),
-        });
-      }
-    );
+        })
+      );
+      return { folder, r };
+    });
+    if (!result) return;
+    const { folder, r } = result;
     scrape.log('批量整理: ' + summarizeBatch('批量整理', r) + ' → ' + folder);
     const pick = await vscode.window.showInformationMessage(
       summarizeBatch('批量整理', r), '打开文件夹', '查看日志');
@@ -61,21 +76,23 @@ function registerBatchCommands({ reg, scrape, cfg }) {
   });
 
   reg('batchConvert', async () => {
-    const picks = await pickFolder(scrape.cool18OutputRoot());
-    if (!picks || !picks.length) return;
-    const folder = picks[0].fsPath;
-    const backup = cfg().get('batchBackup', true);
-    let r = null;
-    await vscode.window.withProgress(
-      { location: vscode.ProgressLocation.Notification, title: '批量转码为 UTF-8', cancellable: true },
-      async (progress, token) => {
-        r = await batch.convertFolder(folder, {
+    const result = await runBatch(async () => {
+      const picks = await pickFolder(scrape.cool18OutputRoot());
+      if (!picks || !picks.length) return;
+      const folder = picks[0].fsPath;
+      const backup = cfg().get('batchBackup', true);
+      const r = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: '批量转码为 UTF-8', cancellable: true },
+        (progress, token) => batch.convertFolder(folder, {
           backup,
           signal: token,
           onProgress: (file, encoding) => progress.report({ message: path.basename(file) + ' ← ' + encoding }),
-        });
-      }
-    );
+        })
+      );
+      return { folder, r };
+    });
+    if (!result) return;
+    const { folder, r } = result;
     scrape.log('批量转码: ' + summarizeBatch('批量转码', r) + ' → ' + folder);
     const pick = await vscode.window.showInformationMessage(
       summarizeBatch('批量转码', r), '查看日志');
