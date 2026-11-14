@@ -61,6 +61,11 @@ async function main() {
   eq((await sCore.downloadSeries('20')).skipped, 1, '合法短正文保留');
   eq(fs.readFileSync(short, 'utf8').includes('自写。'), true, '短正文未覆盖');
   eq(sCore.writer.manifest.series['20'].dir === sCore.writer.manifest.series['21'].dir, false, '同名系列目录隔离');
+  const missingFile = sCore.writer.safePath(sCore.writer.manifest.series['21'].files[0].file);
+  fs.unlinkSync(missingFile);
+  eq((await sCore.downloadSeries('21')).saved, 1, '缺失章节补抓成功');
+  eq(sCore.writer.manifest.series['21'].files.length, 1, '补抓章节回填内存记录');
+  eq(new Writer({ outputRoot: sCore.writer.outputRoot }).manifest.series['21'].files.length, 1, '补抓记录实际持久化');
   const legacyRoot = folder('legacy');
   const legacyFile = path.join(legacyRoot, '旧作者', '旧合集', '001 第一章.txt');
   fs.mkdirSync(path.dirname(legacyFile), { recursive: true });

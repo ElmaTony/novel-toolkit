@@ -167,7 +167,6 @@ class PixivCore {
           }
         } else {
           this.log(`章节 ${ch.id} 在 manifest 有记录但文件缺失，重新下载`);
-          entry.files = entry.files.filter((f) => f.id !== ch.id);
           forceWrite = true;
         }
       }
