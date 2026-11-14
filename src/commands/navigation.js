@@ -6,12 +6,12 @@ const chapters = require('../engine/chapters');
 const { docLines, jumpToLine, noDoc } = require('../core/editor');
 
 function registerNavigationCommands({ reg, panel, checker, cfg }) {
-  reg('check', () => {
+  reg('check', async () => {
     const editor = panel.editor();
     if (!editor) {
       return noDoc();
     }
-    const r = checker.fullScan(editor.document);
+    const r = await checker.fullScan(editor.document);
     if (!r) {
       return vscode.window.showInformationMessage('当前文件类型已排除检查');
     }
@@ -33,12 +33,12 @@ function registerNavigationCommands({ reg, panel, checker, cfg }) {
     );
   });
 
-  const makeJump = (keys, label, emptyMsg, backwards) => () => {
+  const makeJump = (keys, label, emptyMsg, backwards) => async () => {
     const editor = panel.editor();
     if (!editor) {
       return;
     }
-    const r = checker.fullScan(editor.document);
+    const r = await checker.fullScan(editor.document);
     if (!r) {
       return;
     }
@@ -76,12 +76,12 @@ function registerNavigationCommands({ reg, panel, checker, cfg }) {
   reg('nextQuote', makeJump('quote', '引号配对', '全文没有引号配对问题 ✓', false));
   reg('prevQuote', makeJump('quote', '引号配对', '全文没有引号配对问题 ✓', true));
 
-  const chapterJump = (backwards) => () => {
+  const chapterJump = (backwards) => async () => {
     const editor = panel.editor();
     if (!editor) {
       return;
     }
-    const lines = chapters.chapterLines(docLines(editor.document), cfg().get('chapterPattern'));
+    const lines = (await panel.chapterEntries(editor.document)).map(entry => entry.line);
     if (lines.length === 0) {
       vscode.window.setStatusBarMessage('未识别到章节名（可调整 novelToolkit.chapterPattern）', 4000);
       return;
@@ -122,7 +122,7 @@ function registerNavigationCommands({ reg, panel, checker, cfg }) {
       return noDoc();
     }
     const doc = editor.document;
-    const entries = chapters.chapterEntries(docLines(doc), cfg().get('chapterPattern'));
+    const entries = await panel.chapterEntries(doc);
     if (entries.length === 0) {
       return vscode.window.showInformationMessage('未识别到章节名（可调整设置里的 novelToolkit.chapterPattern）');
     }

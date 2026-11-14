@@ -1,3 +1,4 @@
+const { makeTemp } = require('./temp');
 'use strict';
 
 // cool18 核心流程测试: 注入 fake fetchPage, 离线验证排序/去重/命名/落盘
@@ -27,7 +28,7 @@ const page = (title, body, links) => {
 
   // 1) 混合编号: 无编号帖按"父帖位置+链接序号"的分数键排序, 不再堆到末尾
   {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'c18-frac-'));
+    const tmp = makeTemp('c18-frac-');
     const pages = {
       1: page('【书】(1-2) 作者：x', '　　第一章 内容。', [
         { tid: 2, text: '【书】作者的话' },
@@ -58,7 +59,7 @@ const page = (title, body, links) => {
 
   // 2) 同章号去重: 保留正文更长的一份
   {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'c18-dup-'));
+    const tmp = makeTemp('c18-dup-');
     const pages = {
       10: page('【书2】第四章', '　　短的版本。', [{ tid: 11, text: '【书2】第四章（完）' }]),
       11: page('【书2】第四章（完）', '　　长很多很多很完整的版本，包含全部情节。', []),
@@ -78,7 +79,7 @@ const page = (title, body, links) => {
 
   // 2.5) 分部章: （5上）（5下）同章号不同部 —— 都保留, 按上→下排序（v0.12.0 互删 bug 回归）
   {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'c18-part-'));
+    const tmp = makeTemp('c18-part-');
     const pages = {
       30: page('【书3】(1-2) 作者：y', '　　第一章 上部内容，交代背景。', [{ tid: 31, text: '（5下）' }]),
       31: page('（5下）', '　　第五章下部内容，结局。', []),
@@ -103,7 +104,7 @@ const page = (title, body, links) => {
 
   // 3) 成品命名: 完结书
   {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'c18-name-'));
+    const tmp = makeTemp('c18-name-');
     const pages = {
       20: page('【书名】(1-2完) 作者：测试者', '　　正文。', []),
     };

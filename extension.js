@@ -7,7 +7,8 @@ const { Checker } = require('./src/service/checker');
 const { PanelManager } = require('./src/ui/panel');
 const { ScrapeManager } = require('./src/service/scrape');
 const { registerNavigationCommands } = require('./src/commands/navigation');
-const { registerOrganizeCommands } = require('./src/commands/organize');
+const { registerOrganizeCommands, disposeOrganize } = require('./src/commands/organize');
+const { isLargeDocument } = require('./src/engine/analysis-worker');
 const { registerFileCommands } = require('./src/commands/files');
 const { registerBatchCommands } = require('./src/commands/batch');
 const { registerScrapeCommands } = require('./src/commands/scrape');
@@ -25,6 +26,7 @@ function activate(context) {
 
   registerNavigationCommands({ reg, panel, checker, cfg });
   registerOrganizeCommands({ reg, panel, checker, cfg });
+  context.subscriptions.push({ dispose: disposeOrganize });
   registerFileCommands({ reg, panel, checker });
   registerBatchCommands({ reg, scrape, cfg });
   registerScrapeCommands({ reg, panel, scrape });
@@ -33,11 +35,18 @@ function activate(context) {
 
   // ── 编辑器事件 ──
   context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (!event.affectsConfiguration('novelToolkit')) return;
+      checker.reset();
+      for (const doc of vscode.workspace.textDocuments) checker.checkDocument(doc, true);
+      panel.chapterCache = new WeakMap();
+      panel.scheduleUpdate();
+    }),
     vscode.workspace.onDidOpenTextDocument((d) => checker.checkDocument(d)),
     vscode.workspace.onDidCloseTextDocument((d) => checker.forget(d)),
     vscode.workspace.onDidChangeTextDocument((e) => {
       // 小文件每次改动立即复查；大文件防抖（行数阈值 8000 ≈ 320KB+ 文本，避免每键全量扫描卡顿）
-      if (e.document.lineCount <= 8000) {
+      if (!isLargeDocument(e.document)) {
         checker.checkDocument(e.document);
       } else {
         checker.schedule(e.document);

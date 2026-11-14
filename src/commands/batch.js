@@ -19,6 +19,7 @@ function summarizeBatch(r) {
   const lines = ['批量整理完成：共 ' + r.total + ' 个 txt'];
   lines.push('有改动 ' + r.changed + ' 个、已规范 ' + r.unchanged + ' 个');
   if (r.errors.length) lines.push('出错 ' + r.errors.length + ' 个');
+  if (r.needsReview && r.needsReview.length) lines.push('解码存疑已跳过 ' + r.needsReview.length + ' 个');
   if (r.cancelled) lines.push('（已取消）');
   return lines.join('，');
 }
@@ -65,6 +66,8 @@ function registerBatchCommands({ reg, scrape, cfg }) {
     if (!result) return;
     const { folder, r } = result;
     scrape.log(summarizeBatch(r) + ' → ' + folder);
+    for (const error of r.errors) scrape.log(error);
+    for (const file of r.needsReview || []) scrape.log('解码存疑，原文保留：' + file);
     const pick = await vscode.window.showInformationMessage(
       summarizeBatch(r), '打开文件夹', '查看日志');
     if (pick === '打开文件夹') scrape.openOutputDir(folder);

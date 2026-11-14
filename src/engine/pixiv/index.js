@@ -47,6 +47,8 @@ class PixivCore {
     this.api = new Api(this.fetcher, opts);
     this.writer = new Writer(opts);
     this.log = opts.log || (() => {});
+    this.forceSeries = new Set();
+    this.forceNovels = new Set();
   }
 
   parseInput(t) { return parseInput(t); }
@@ -66,15 +68,16 @@ class PixivCore {
       throw new PixivError('empty', 'Pixiv 返回了空正文' + (novel.xRestrict ? '（R-18 作品）' : '') +
         ' —— Cookie 可能已失效，或账号未开启“浏览R-18作品”显示设置');
     }
-    const file = this.writer.novelPath(novel.userName, novel.userId, novel.title);
-    const r = this.writer.saveText(file, rendered.text);
+    const file = this.writer.novelPath(novel.userName, novel.userId, novel.title, novel.id);
+    const r = this.writer.saveText(file, rendered.text, { overwrite: this.forceNovels.has(String(novelId)), backup: true });
+    this.forceNovels.delete(String(novelId));
     this.writer.writeUrlNote(path.dirname(file), novelUrl(novel.id), novel.title);
     this.writer.writeMeta(file, metaOf(novel, 0, null));
     this.writer.manifest.novels[novel.id] = {
       title: novel.title,
       author: novel.userName,
       userId: novel.userId,
-      file,
+      file: this.writer.relative(file),
       seriesNav: novel.seriesNav,
       fetchedAt: new Date().toISOString(),
     };
@@ -84,38 +87,20 @@ class PixivCore {
     return { type: 'novel', id: novel.id, title: novel.title, file, skipped: r.skipped, unknownMarkers: rendered.unknown, seriesNav: novel.seriesNav };
   }
 
-  // 强制重抓前置：删除系列目录（含 _合并.txt）与 manifest 记录，下次 downloadSeries 从零开始
-  clearSeries(seriesId) {
-    const entry = this.writer.manifest.series[seriesId];
-    if (!entry) { return false; }
-    const authorDir = path.join(this.writer.outputRoot, sanitizeName(entry.author || `用户${entry.userId}`, 60));
-    const dir = path.join(authorDir, sanitizeName(entry.title, 60));
-    try {
-      fs.rmSync(dir, { recursive: true, force: true });
-      this.log(`强制重抓：已删除系列目录 ${dir}`);
-      try { fs.rmdirSync(authorDir); } catch (e) { /* 作者目录非空则保留 */ }
-    } catch (e) {
-      this.log(`强制重抓：删除系列目录失败（忽略，继续重抓）: ${e.message}`);
-    }
-    delete this.writer.manifest.series[seriesId];
-    this.writer.saveManifest();
+  // 强制重抓只标记意图；成功拿到正文后备份替换，失败时保留旧文件。
+  clearSeries(id) {
+    const entry = this.writer.manifest.series[id];
+    if (!entry) return false;
+    if (entry.dir) this.writer.safePath(entry.dir);
+    for (const file of entry.files || []) if (file.file) this.writer.safePath(file.file);
+    this.forceSeries.add(String(id));
     return true;
   }
-
-  // 强制重抓前置：删除单篇文件与 manifest 记录
-  clearNovel(novelId) {
-    const entry = this.writer.manifest.novels[novelId];
-    if (!entry) { return false; }
-    try {
-      if (entry.file && fs.existsSync(entry.file)) {
-        fs.rmSync(entry.file, { force: true });
-        this.log(`强制重抓：已删除单篇文件 ${entry.file}`);
-      }
-    } catch (e) {
-      this.log(`强制重抓：删除单篇文件失败（忽略）: ${e.message}`);
-    }
-    delete this.writer.manifest.novels[novelId];
-    this.writer.saveManifest();
+  clearNovel(id) {
+    const entry = this.writer.manifest.novels[id];
+    if (!entry) return false;
+    if (entry.file) this.writer.safePath(entry.file);
+    this.forceNovels.add(String(id));
     return true;
   }
 
@@ -125,7 +110,7 @@ class PixivCore {
     this._bindSignal(ctx);
     const { meta, chapters } = await this.api.seriesAll(seriesId);
     if (!chapters.length) this.log(`系列 ${seriesId} 没有可下载的章节`);
-    const dir = this.writer.seriesDir(meta.userName, meta.userId, meta.title);
+    const dir = this.writer.seriesDir(meta.userName, meta.userId, meta.title, seriesId);
     let entry = this.writer.manifest.series[seriesId];
     if (!entry) {
       entry = {
@@ -138,37 +123,42 @@ class PixivCore {
       };
       this.writer.manifest.series[seriesId] = entry;
     }
+    const legacy = !entry.dir;
+    const legacyAuthor = entry.author;
+    const legacyTitle = entry.title;
+    const ambiguousLegacy = legacy && Object.entries(this.writer.manifest.series).some(([id, other]) => id !== String(seriesId) && other.author === legacyAuthor && other.title === legacyTitle);
+    entry.dir = this.writer.relative(dir);
     entry.title = meta.title;
     entry.author = meta.userName;
 
-    const knownIds = new Set(entry.files.map((f) => f.id));
+    const knownIds = new Map(entry.files.map(f => [String(f.id), f]));
+    const force = this.forceSeries.has(String(seriesId));
     const failures = [];
     let saved = 0;
     let skipped = 0;
     let emptyStreak = 0;
     const total = chapters.length;
+    try {
     for (let i = 0; i < total; i++) {
       if (ctx.signal && ctx.signal.aborted) { this.log('已取消（写完当前章后停止，可再次运行续传）'); break; }
       const ch = chapters[i];
       const order = ch.order || i + 1;
-      let forceWrite = false;
-      const known = entry.files.find((f) => f.id === ch.id);
-      if (known) {
+      let forceWrite = force;
+      const known = knownIds.get(String(ch.id));
+      if (known && !force && !ambiguousLegacy) {
         // 自愈: manifest 记录已抓, 但文件已不在盘上（被手动清理）或只剩标题行空壳（空正文 bug 的产物）→ 重新下载
-        const knownPath = this.writer.chapterPath(
-          meta.userName, meta.userId, meta.title,
-          known.order || order,
-          known.title || `第${known.order || order}话`
-        );
+        const knownPath = known.file ? this.writer.safePath(known.file) : legacy
+          ? this.writer.legacyChapterPath(legacyAuthor, entry.userId, legacyTitle, known.order || order, known.title || '第' + order + '话')
+          : this.writer.chapterPath(meta.userName, meta.userId, meta.title, known.order || order, known.title, seriesId);
+        known.file = this.writer.relative(knownPath);
         if (fs.existsSync(knownPath)) {
           let shellOnly = false;
           try {
             const txt = fs.readFileSync(knownPath, 'utf8');
-            if (txt.split(/\r?\n/).slice(1).join('').trim().length < 10) shellOnly = true;
+            if (txt.split(/\r?\n/).slice(1).join('').trim().length === 0) shellOnly = true;
           } catch (e) { /* 读取失败 → 当作正常存在 */ }
           if (shellOnly) {
             this.log(`章节 ${ch.id} 文件只有标题行（空壳），重新下载`);
-            entry.files = entry.files.filter((f) => f.id !== ch.id);
             forceWrite = true;
           } else {
             ctx.onProgress && ctx.onProgress(i, total, `《${meta.title}》${pad3(order)} ${known.title}（已存在跳过）`);
@@ -198,22 +188,27 @@ class PixivCore {
           continue;
         }
         emptyStreak = 0;
-        const file = this.writer.chapterPath(meta.userName, meta.userId, meta.title, order, novel.title);
+        const file = this.writer.chapterPath(meta.userName, meta.userId, meta.title, order, novel.title, seriesId);
         // 首行 = 章节名（网页上的”第X章 XXXX”），供章节导航与合并版直接识别
         // forceWrite: 仅当确认既有文件是缺失后重抓的残留空壳时才允许覆盖
-        const r = this.writer.saveText(file, chapterTitleLine(order, novel.title) + '\n\n' + rendered.text, { overwrite: forceWrite });
+        const r = this.writer.saveText(file, chapterTitleLine(order, novel.title) + '\n\n' + rendered.text, { overwrite: forceWrite, backup: true });
         if (!r.skipped) saved++;
-        entry.files.push({ id: ch.id, order, title: novel.title });
+        const record = known || {};
+        Object.assign(record, { id: String(ch.id), order, title: novel.title, file: this.writer.relative(file) });
+        if (!known) entry.files.push(record);
+        knownIds.set(String(ch.id), record);
         this.writer.writeMeta(file, metaOf(novel, order, meta));
         if (rendered.unknown.length) this.log(`未识别标记(${ch.id}): ${rendered.unknown.join(' ')}`);
-        this.writer.saveManifest();
+        this.writer.saveManifest({ checkpoint: true });
       } catch (e) {
-        if (e.kind === 'auth') throw e; // Cookie 失效 → 熔断，上层引导更新
+        if (e.kind === 'auth') throw e; // finally 会持久化已完成章节
         failures.push({ id: ch.id, title: '', kind: e.kind || 'error', message: e.message });
         this.log(`章节 ${ch.id} 失败(${e.kind}): ${e.message}`);
       }
     }
 
+    } finally { this.writer.saveManifest(); }
+    this.forceSeries.delete(String(seriesId));
     entry.count = meta.publishedContentCount;
     entry.fetchedAt = new Date().toISOString();
     entry.failed = failures;
@@ -243,7 +238,7 @@ class PixivCore {
       const rec = byId.get(ch.id);
       const order = (rec && rec.order) || ch.order;
       const title = (rec && rec.title) || `第${order}话`;
-      const file = this.writer.chapterPath(meta.userName, meta.userId, meta.title, order, title);
+      const file = rec && rec.file ? this.writer.safePath(rec.file) : this.writer.chapterPath(meta.userName, meta.userId, meta.title, order, title, meta.id);
       parts.push('');
       try {
         // 章节文件自带章节名首行，直接拼接即可
@@ -256,7 +251,7 @@ class PixivCore {
     });
     const merged = path.join(dir, '_合并.txt');
     this.writer.saveText(merged, parts.join('\n'), { overwrite: true });
-    entry.mergedFile = merged;
+    entry.mergedFile = this.writer.relative(merged);
     if (missing) this.log(`合并版有 ${missing} 章下载失败，已在对应位置留占位`);
   }
 
@@ -278,6 +273,7 @@ class PixivCore {
       try {
         const r = await this.downloadSeries(sid, ctx);
         seriesResults.push(r);
+        failures.push(...r.failures.map(f => '系列 ' + sid + ' / ' + f.id + ': ' + f.message));
         r.savedChapterIds.forEach((id) => covered.add(id));
       } catch (e) {
         if (e.kind === 'auth') throw e;
@@ -306,6 +302,7 @@ class PixivCore {
   async checkUpdates(ctx = {}) {
     this._bindSignal(ctx);
     const updates = [];
+    const failures = [];
     for (const [sid, entry] of Object.entries(this.writer.manifest.series)) {
       if (ctx.signal && ctx.signal.aborted) break;
       try {
@@ -313,17 +310,19 @@ class PixivCore {
         const oldCount = entry.count || (entry.files || []).length;
         if (meta.publishedContentCount > oldCount) {
           this.log(`《${entry.title}》${oldCount} → ${meta.publishedContentCount} 章，补抓新章`);
-          await this.downloadSeries(sid, ctx);
-          updates.push({ id: sid, title: entry.title, oldCount, newCount: meta.publishedContentCount });
+          const result = await this.downloadSeries(sid, ctx);
+          failures.push(...result.failures.map(f => '系列 ' + sid + ' / ' + f.id + ': ' + f.message));
+          updates.push({ id: sid, title: entry.title, oldCount, newCount: meta.publishedContentCount, saved: result.saved, failures: result.failures.length });
         } else {
           this.log(`《${entry.title}》无更新（${oldCount} 章）`);
         }
       } catch (e) {
         if (e.kind === 'auth') throw e;
-        this.log(`检查《${entry.title}》失败: ${e.message}`);
+        failures.push(`检查《${entry.title}》失败: ${e.message}`);
+        this.log(failures[failures.length - 1]);
       }
     }
-    return updates;
+    return { updates, failures, aborted: !!(ctx.signal && ctx.signal.aborted) };
   }
 
   async downloadTargets(targets, ctx = {}) {

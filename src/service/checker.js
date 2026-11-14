@@ -2,6 +2,7 @@
 
 const vscode = require('vscode');
 const transforms = require('../engine/transforms');
+const { AnalysisWorker, isLargeDocument } = require('../engine/analysis-worker');
 
 const SOURCE = 'NovelToolkit';
 
@@ -15,6 +16,12 @@ class Checker {
     this.statusBar.command = 'novelToolkit.check';
     this.silenced = new Set();
     this.timers = new Map();
+    this.analysis = new AnalysisWorker();
+    this.scanCache = new WeakMap();
+    this.scanJobs = new WeakMap();
+    this.scanEpoch = 0;
+    this.disposed = false;
+    context.subscriptions.push({ dispose: () => { this.disposed = true; this.reset(); this.analysis.dispose(); } });
     this.onStateChange = null; // 由装配层设置，扫描/静音后回调
     context.subscriptions.push(this.diags, this.statusBar);
   }
@@ -36,16 +43,32 @@ class Checker {
     }
     this.silenced.delete(doc.uri.toString());
     const c = this.cfg();
+    const options = {
+      ignoreBlankLines: c.get('ignoreBlankLines', true), shortLineCheck: c.get('shortLineCheck', true),
+      shortLineMaxChars: c.get('shortLineMaxChars', 2), quotePairCheck: c.get('quotePairCheck', true)
+    };
+    const signature = JSON.stringify(options);
+    const cached = this.scanCache.get(doc);
+    const version = doc.version;
+    const publish = (lines, r) => {
+      if (this.disposed || doc.isClosed || doc.version !== version || !this.appliesTo(doc)) return;
+      this.scanCache.set(doc, { version, signature, lines, result: r });
+      return this.publish(doc, lines, r);
+    };
+    if (cached && version !== undefined && cached.version === version && cached.signature === signature) return publish(cached.lines, cached.result);
     const lines = [];
-    for (let i = 0; i < doc.lineCount; i++) {
-      lines.push(doc.lineAt(i).text);
-    }
-    const r = transforms.scanLines(lines, {
-      ignoreBlankLines: c.get('ignoreBlankLines', true),
-      shortLineCheck: c.get('shortLineCheck', true),
-      shortLineMaxChars: c.get('shortLineMaxChars', 2),
-      quotePairCheck: c.get('quotePairCheck', true)
+    for (let i = 0; i < doc.lineCount; i++) lines.push(doc.lineAt(i).text);
+    if (!isLargeDocument(doc)) return publish(lines, transforms.scanLines(lines, options));
+    const job = {};
+    const epoch = this.scanEpoch;
+    this.scanJobs.set(doc, job);
+    return this.analysis.run('scan', { text: lines.join('\n'), options }).then(result => {
+      if (this.scanEpoch !== epoch || this.scanJobs.get(doc) !== job || this.silenced.has(doc.uri.toString())) return;
+      return publish(lines, result);
     });
+  }
+
+  publish(doc, lines, r) {
     const list = [];
     for (const w of r.ws) {
       const d = new vscode.Diagnostic(
@@ -104,7 +127,9 @@ class Checker {
     if (!force && this.silenced.has(doc.uri.toString())) {
       return;
     }
-    this.fullScan(doc);
+    const result = this.fullScan(doc);
+    if (result && result.catch) result.catch(error => { if (!this.disposed) vscode.window.setStatusBarMessage('检查失败：' + error.message, 5000); });
+    return result;
   }
 
   // 大文件防抖复查
@@ -120,7 +145,17 @@ class Checker {
     }, 250));
   }
 
+  reset() {
+    this.scanEpoch++;
+    this.scanCache = new WeakMap();
+    for (const timer of this.timers.values()) clearTimeout(timer);
+    this.timers.clear();
+    this.diags.clear();
+    this.silenced.clear();
+  }
+
   silence(doc) {
+    this.scanJobs.delete(doc);
     this.silenced.add(doc.uri.toString());
     this.diags.delete(doc.uri);
     this.notify();
@@ -128,6 +163,8 @@ class Checker {
 
   // 文档关闭后彻底清理：诊断残留、静音标记、待触发的防抖定时器
   forget(doc) {
+    this.scanCache.delete(doc);
+    this.scanJobs.delete(doc);
     const key = doc.uri.toString();
     this.diags.delete(doc.uri);
     this.silenced.delete(key);

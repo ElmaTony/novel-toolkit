@@ -11,13 +11,7 @@ const { decodePage } = require('./parse');
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
 
 // 可中断 sleep：取消时立即 reject，重试退避不阻塞“取消”
-const sleep = (ms, signal) => new Promise((resolve, reject) => {
-  if (signal && signal.aborted) { reject(new Error('已取消')); return; }
-  const t = setTimeout(resolve, ms);
-  if (signal) {
-    signal.addEventListener('abort', () => { clearTimeout(t); reject(new Error('已取消')); }, { once: true });
-  }
-});
+const { sleep } = require('../async');
 
 function headers() {
   return { 'User-Agent': UA, 'Accept': 'text/html,application/xhtml+xml,*/*' };
@@ -40,6 +34,11 @@ function requestBuffer(urlStr, { proxy, timeoutMs, signal }) {
       req.on('error', reject);
     };
     const onRes = (res) => {
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        res.resume();
+        reject(new Error('HTTP ' + res.statusCode));
+        return;
+      }
       const chunks = [];
       let size = 0;
       res.on('data', (c) => {

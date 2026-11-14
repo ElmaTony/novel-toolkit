@@ -86,7 +86,8 @@ function writeText(filePath, text) {
   if (fs.existsSync(filePath)) {
     return false; // 绝不覆盖
   }
-  fs.writeFileSync(filePath, '\ufeff' + toCRLF(text), 'utf8');
+  try { fs.writeFileSync(filePath, '\ufeff' + toCRLF(text), { encoding: 'utf8', flag: 'wx' }); }
+  catch (e) { if (e.code === 'EEXIST') return false; throw e; }
   return true;
 }
 
@@ -94,7 +95,7 @@ class Cool18Core {
   constructor(opts = {}) {
     this.outputRoot = opts.outputRoot;
     this.proxy = opts.proxy || '';
-    this.delayMs = Math.max(0, Number(opts.delayMs) || 1000);
+    this.delayMs = Math.max(0, Number(opts.delayMs === undefined ? 1000 : opts.delayMs));
     this.maxPages = Math.max(1, Number(opts.maxPages) || 300);
     this.maxRetries = Math.max(1, Number(opts.maxRetries) || 4);
     this.cleanAds = opts.cleanAds !== false;
@@ -104,7 +105,7 @@ class Cool18Core {
 
   _nextDelay() {
     // ±20% 抖动，避免固定节奏触发站点限速
-    return Math.max(200, Math.round(this.delayMs * (0.8 + Math.random() * 0.4)));
+    return Math.max(0, Math.round(this.delayMs * (0.8 + Math.random() * 0.4)));
   }
 
   // 站内搜索: 返回 [{ tid, title }]
@@ -122,9 +123,9 @@ class Cool18Core {
     if (deep) {
       const seen = new Set();
       const seenChap = new Set(); // 已覆盖的 卷:章（仅整数编号帖参与）
-      let curVol = 0; // 卷上下文: 不带卷号的帖子继承当前卷
-      const queue = entries.slice(0, 1).map((u) => ({ url: u, via: '', base: null, frac: 0 }));
-      while (queue.length && items.length < this.maxPages) {
+      let visitedPages = 0; // 包含重复与失败页，避免去重绕过访问上限
+      const queue = entries.slice(0, 1).map((u) => ({ url: u, via: '', base: null, frac: 0, vol: 0 }));
+      while (queue.length && visitedPages < this.maxPages) {
         if (signal && signal.aborted) {
           this.log('[停止] 用户中断');
           break;
@@ -140,15 +141,14 @@ class Cool18Core {
           seen.add(tm[1]);
         }
         let t;
+        visitedPages++;
         try {
           t = extractThread(await this.fetchPage(url, { proxy: this.proxy, retries: this.maxRetries, signal, log: this.log }), {
             cleanAds: this.cleanAds,
             onRemove: (line) => this.log('[清理广告行] ' + line.slice(0, 80)),
           });
         } catch (e) {
-          if (/已取消/.test(e.message)) {
-            throw e;
-          }
+          if ((signal && signal.aborted) || /已取消/.test(e.message)) { this.log('[停止] 保存已抓内容'); break; }
           const retry = (item.retry || 0) + 1;
           if (retry <= 2) {
             // 单页 fetch 内部已重试过；失败重排队再试两轮，缓解瞬时抽风造成的缺章
@@ -171,11 +171,7 @@ class Cool18Core {
         }
         // 卷上下文: 标题带卷号的帖子更新当前卷; 不带卷号的帖子继承当前卷
         let vol = key[0];
-        if (vol === 0 && curVol > 0) {
-          vol = curVol;
-        } else if (vol > 0 && vol < 1e8) {
-          curVol = vol;
-        }
+        if (vol === 0 && item.vol > 0 && item.vol < 1e8) vol = item.vol;
         const chapStart = key[1];
         const part = key[2];
         const chapEnd = key[4] || key[1];
@@ -196,7 +192,11 @@ class Cool18Core {
             } else {
               this.log('[跳过] 第 ' + vol + ':' + chapStart + ' 章的重复帖: ' + t.title.slice(0, 30));
             }
+            t.links.forEach((link, index) => {
+              if (!seen.has(String(link.tid))) queue.push({ url: BBS4 + link.tid, via: link.text, base: chapEnd, frac: (index + 1) / (t.links.length + 1), vol });
+            });
             onProgress('[' + items.length + '] ' + t.title + '（重复/替换）');
+            if (queue.length && !(await sleepSlice(this._nextDelay(), signal))) break;
             continue;
           }
         }
@@ -221,6 +221,7 @@ class Cool18Core {
               via: lk.text,
               base: numbered ? chapEnd : sortChap,
               frac: (li + 1) / (linkCount + 1),
+              vol,
             });
           }
         }
@@ -231,6 +232,7 @@ class Cool18Core {
           }
         }
       }
+      if (queue.length && visitedPages >= this.maxPages) this.log('已达到帖子访问上限 ' + this.maxPages);
       items.sort((a, b) =>
         (a.key[0] - b.key[0]) || (a.key[1] - b.key[1]) || (a.key[2] - b.key[2]) || (a.key[3] - b.key[3]) || (a.key[4] - b.key[4]));
       // 缺章检测: 按卷检查章号覆盖, 卷与章的缺口都大声报告
@@ -253,9 +255,7 @@ class Cool18Core {
             onRemove: (line) => this.log('[清理广告行] ' + line.slice(0, 80)),
           });
         } catch (e) {
-          if (/已取消/.test(e.message)) {
-            throw e;
-          }
+          if ((signal && signal.aborted) || /已取消/.test(e.message)) { this.log('[停止] 保存已抓内容'); break; }
           failed.push({ url, error: e.message });
           this.log('[' + (i + 1) + '/' + total + '] 失败跳过: tid=' + url.split('tid=').pop() + ' (' + e.message + ')');
           continue;
@@ -273,14 +273,14 @@ class Cool18Core {
     }
 
     if (!items.length) {
-      throw new Error('没有抓到任何帖子');
+      throw new Error(signal && signal.aborted ? '已取消' : '没有抓到任何帖子');
     }
 
     const out = path.join(this.outputRoot, sanitizeName(items[0].t.title));
     fs.mkdirSync(out, { recursive: true });
     const merged = [];
     const files = [];
-    let aborted = false;
+    let aborted = !!(signal && signal.aborted);
     items.forEach((it, idx) => {
       it.pos = idx + 1; // 文件名按成品阅读顺序编号
     });

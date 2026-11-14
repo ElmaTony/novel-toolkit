@@ -5,6 +5,7 @@ const chapters = require('../engine/chapters');
 const { buildPanelHtml } = require('./panel-html');
 const { parseCool18Entries, parsePixivInput } = require('../service/scrape');
 const { RUNNABLE, HOST_COMMANDS } = require('./messages');
+const { AnalysisWorker, isLargeDocument } = require('../engine/analysis-worker');
 
 // RUNNABLE / HOST_COMMANDS 集中定义在 ./messages
 
@@ -19,6 +20,10 @@ class PanelManager {
     this.updateTimer = null;
     this.cursorTimer = null;
     this.cursorLine = -1;
+    this.disposed = false;
+    this.chapterCache = new WeakMap();
+    this.analysis = new AnalysisWorker();
+    context.subscriptions.push({ dispose: () => { this.disposed = true; clearTimeout(this.updateTimer); clearTimeout(this.cursorTimer); this.analysis.dispose(); if (this.panel) this.panel.dispose(); } });
     scrape.onTask = (running, text) => this.postTask(running, text);
 
     const btn = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
@@ -47,7 +52,7 @@ class PanelManager {
   reveal() {
     if (this.panel) {
       this.panel.reveal();
-      this.update();
+      this.update().catch(error => !this.disposed && this.scrape.log('面板更新失败: ' + error.message));
       this.postScrapeState();
       return;
     }
@@ -62,7 +67,7 @@ class PanelManager {
       this.panel = null;
     }, null, this.context.subscriptions);
     this.panel.webview.onDidReceiveMessage((msg) => this.handle(msg));
-    this.update();
+    this.update().catch(error => this.scrape.log('面板更新失败: ' + error.message));
     this.postScrapeState();
   }
 
@@ -115,7 +120,7 @@ class PanelManager {
       return;
     }
     if (msg.command === 'refresh') {
-      this.update();
+      this.update().catch(error => this.scrape.log('面板更新失败: ' + error.message));
       this.postScrapeState();
       return;
     }
@@ -269,7 +274,19 @@ class PanelManager {
     }, () => {});
   }
 
-  update() {
+  chapterEntries(doc) {
+    const pattern = vscode.workspace.getConfiguration('novelToolkit').get('chapterPattern');
+    const version = doc.version;
+    const cached = this.chapterCache.get(doc);
+    if (version !== undefined && cached && cached.version === version && cached.pattern === pattern) return cached.entries;
+    const lines = [];
+    for (let i = 0; i < doc.lineCount; i++) lines.push(doc.lineAt(i).text);
+    const entries = isLargeDocument(doc) ? this.analysis.run('chapters', { text: lines.join('\n'), pattern }) : chapters.chapterEntries(lines, pattern);
+    if (version !== undefined) this.chapterCache.set(doc, { version, pattern, entries });
+    return entries;
+  }
+
+  async update() {
     if (!this.panel) {
       return;
     }
@@ -284,16 +301,11 @@ class PanelManager {
     }
     const doc = ed.document;
     this.cursorLine = ed.selection.active.line;
-    const cfg = vscode.workspace.getConfiguration('novelToolkit');
-    const lines = [];
-    for (let i = 0; i < doc.lineCount; i++) {
-      lines.push(doc.lineAt(i).text);
-    }
-    const chs = chapters.chapterEntries(lines, cfg.get('chapterPattern')).map((e) => ({
-      line: e.line,
-      title: e.title,
-      kind: e.kind
-    }));
+    const version = doc.version;
+    let entries = this.chapterEntries(doc);
+    if (entries && entries.then) entries = await entries;
+    if (doc.isClosed || doc.version !== version || this.editor() !== ed) return;
+    const chs = entries.map(e => ({ line: e.line, title: e.title, kind: e.kind }));
     let fileName;
     if (doc.isUntitled) {
       fileName = '未保存文件';
@@ -357,7 +369,7 @@ class PanelManager {
     }
     this.updateTimer = setTimeout(() => {
       this.updateTimer = null;
-      this.update();
+      this.update().catch(error => this.scrape.log('面板更新失败: ' + error.message));
       this.postScrapeState();
     }, 300);
   }

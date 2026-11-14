@@ -29,7 +29,7 @@ const OUT = path.join(ROOT, 'src', 'engine', 'zh-convert-data.js');
 
 function parseDict(file) {
   const p = path.join(SRC_DIR, file);
-  if (!fs.existsSync(p)) { return []; }
+  if (!fs.existsSync(p)) throw new Error('缺少源字典：' + file + '；未修改现有字表');
   const lines = fs.readFileSync(p, 'utf8').split(/\r?\n/);
   const out = [];
   for (const line of lines) {
@@ -132,6 +132,8 @@ for (const [t, s] of rawPhrases) {
   phraseSeen.add(t);
   phrases.push([t, s]);
 }
+
+if (chars.length < 2000 || phrases.length < 100) throw new Error('源字典异常或不完整，拒绝覆盖现有字表');
 
 // ── 输出 ──
 const lines = [];

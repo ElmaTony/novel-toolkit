@@ -198,7 +198,8 @@ function bodyToText(bodyHtml, opts = {}) {
   const hasMarkers = /\u3000{2,}/.test(text) || /[ \u00a0]{2,}/.test(text);
 
   if (!hasMarkers && !hasParaTags) {
-    return collapseBlankRuns(text.split(WRAP));
+    const plain = collapseBlankRuns(text.split(WRAP));
+    return opts.cleanAds === false ? plain : stripAdLines(plain, opts.onRemove);
   }
 
   const paras = [];
@@ -267,6 +268,8 @@ function bodyToText(bodyHtml, opts = {}) {
 function cnNumeral(str) {
   const digits = { 零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
   const units = { 十: 10, 百: 100, 千: 1000, 万: 10000, 亿: 100000000 };
+  const raw = String(str || '');
+  if (/^[零〇一二两三四五六七八九]+$/.test(raw)) return Number([...raw].map(ch => digits[ch]).join(''));
   let total = 0;
   let section = 0;
   let num = 0;

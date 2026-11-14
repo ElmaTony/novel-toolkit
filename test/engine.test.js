@@ -1,3 +1,4 @@
+const { makeTemp } = require('./temp');
 'use strict';
 
 // 纯离线测试: node test-features.js
@@ -659,8 +660,8 @@ eq(enc.detectEncoding(Buffer.from('hello world')), 'utf8', '纯 ASCII → utf8')
 eq(enc.detectEncoding(Buffer.from('小说测试', 'utf8')), 'utf8', 'UTF-8 中文 → utf8');
 eq(enc.detectEncoding(Buffer.from([0xEF, 0xBB, 0xBF, 0xE5, 0xB0, 0x8F])), 'utf8bom', 'BOM → utf8bom');
 eq(enc.detectEncoding(Buffer.from([0xFF, 0xFE, 0x0F, 0x5C])), 'utf16le', 'BOM → utf16le');
-eq(enc.detectEncoding(Buffer.from([0xD0, 0xA1, 0xCB, 0xB5])), 'gb18030', 'GB2312 字节（小说）→ gb18030');
-eq(enc.decodeToUtf8(Buffer.from([0xD0, 0xA1, 0xCB, 0xB5])).text, '小说', 'GB2312 → 正确解码为"小说"');
+eq(enc.detectEncoding(Buffer.from([0xB2, 0xE2, 0xCA, 0xD4])), 'gb18030', 'GB2312 字节（小说）→ gb18030');
+eq(enc.decodeToUtf8(Buffer.from([0xB2, 0xE2, 0xCA, 0xD4])).text, '测试', 'GB2312 → 正确解码为测试');
 eq(enc.decodeToUtf8(Buffer.from([0xFF, 0xFE, 0x0F, 0x5C])).text, '小', 'UTF-16LE → 正确解码');
 
 // ============ 4. Pixiv 全流程 ============
@@ -719,7 +720,7 @@ console.log('== Pixiv（FakeFetcher 全流程）');
 
 
   // ---- Writer ----
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pixiv-w-'));
+  const tmp = makeTemp('pixiv-w-');
   const w = new Writer({ outputRoot: tmp, saveUrlNote: true, saveMeta: false });
   const f1 = w.novelPath('作者', '1', '书名');
   const r1w = w.saveText(f1, '第一版');
@@ -793,7 +794,7 @@ console.log('== Pixiv（FakeFetcher 全流程）');
   }
 
   async function coreWith(fake, extra = {}) {
-    const tmpd = fs.mkdtempSync(path.join(os.tmpdir(), 'pixiv-c-'));
+    const tmpd = makeTemp('pixiv-c-');
     const core = new PixivCore({ outputRoot: tmpd, intervalMs: 1, saveUrlNote: true, ...extra });
     core.fetcher = fake;
     core.api.f = fake;
@@ -808,7 +809,7 @@ console.log('== Pixiv（FakeFetcher 全流程）');
       eq(r.saved, 3, '系列下载成功章数（1 章失败）');
       eq(r.failures.length, 1, '失败章记录');
       eq(r.failures[0].kind, 'notfound', '失败类型');
-      const dir = path.join(tmp, '测试作者', '测试系列');
+      const dir = core.writer.seriesDir('测试作者', '999', '测试系列', '700');
       const files = fs.readdirSync(dir).sort();
       eq(files.filter((f) => /^\d{3} /.test(f)).length, 3, '章节文件数 001~003 编号格式');
       eq(fs.readFileSync(path.join(dir, '001 第一章 开始.txt'), 'utf8').split('\r\n')[0],
@@ -840,12 +841,12 @@ console.log('== Pixiv（FakeFetcher 全流程）');
     {
       const { core, tmp } = await coreWith(makeFake('720', SER));
       await core.downloadSeries('720');
-      const dir720 = path.join(tmp, '测试作者', '测试系列');
+      const dir720 = core.writer.seriesDir('测试作者', '999', '测试系列', '720');
       ok(fs.existsSync(dir720), '强制重抓前置：系列目录已生成');
       ok(fs.existsSync(path.join(dir720, '_合并.txt')), '强制重抓前置：合并版已生成');
       eq(core.clearSeries('720'), true, 'clearSeries 命中已有记录');
-      ok(!fs.existsSync(dir720), 'clearSeries 删除系列目录');
-      eq(core.writer.manifest.series['720'], undefined, 'clearSeries 删除 manifest 记录');
+      ok(fs.existsSync(dir720), '强制重抓前保留旧系列目录');
+      ok(core.writer.manifest.series['720'], '强制重抓前保留抓取记录');
       const r = await core.downloadSeries('720');
       eq(r.saved, 4, '清除后重抓全部章节');
       eq(r.skipped, 0, '清除后无跳过');
@@ -857,8 +858,8 @@ console.log('== Pixiv（FakeFetcher 全流程）');
       fs.writeFileSync(nf, '正文', 'utf8');
       core.writer.manifest.novels['888'] = { title: '散篇888', author: '测试作者', userId: '999', file: nf };
       eq(core.clearNovel('888'), true, 'clearNovel 命中已有记录');
-      ok(!fs.existsSync(nf), 'clearNovel 删除单篇文件');
-      eq(core.writer.manifest.novels['888'], undefined, 'clearNovel 删除 manifest 记录');
+      ok(fs.existsSync(nf), '强制重抓前保留单篇文件');
+      ok(core.writer.manifest.novels['888'], '强制重抓前保留单篇记录');
     }
 
     // 空壳自愈: 章节文件被降级成"只有标题行"（v0.5.7 前空正文 bug 的产物）→ 重跑自动补抓
@@ -866,7 +867,7 @@ console.log('== Pixiv（FakeFetcher 全流程）');
       const fake = makeFake('710', SER);
       const { core, tmp } = await coreWith(fake);
       await core.downloadSeries('710');
-      const f001 = path.join(tmp, '测试作者', '测试系列', '001 第一章 开始.txt');
+      const f001 = core.writer.chapterPath('测试作者', '999', '测试系列', 1, '第一章 开始', '710');
       fs.writeFileSync(f001, '第一章 开始\r\n\r\n', 'utf8');
       const r = await core.downloadSeries('710');
       eq(r.saved, 1, '空壳章节自动重新下载');
@@ -882,7 +883,7 @@ console.log('== Pixiv（FakeFetcher 全流程）');
       eq(r.saved, 0, '空正文不计入 saved');
       eq(r.failures.length, 3, '连续 3 章空正文后熔断');
       ok(r.failures.every((f) => f.kind === 'empty'), '空正文 kind=empty');
-      const dir709 = path.join(tmp, '测试作者', '测试系列');
+      const dir709 = core.writer.seriesDir('测试作者', '999', '测试系列', '709');
       eq(fs.readdirSync(dir709).filter((f) => /^\d{3} /.test(f)).length, 0, '不写空壳文件');
       const m709 = fs.existsSync(path.join(tmp, 'pixiv-manifest.json'))
         ? JSON.parse(fs.readFileSync(path.join(tmp, 'pixiv-manifest.json'), 'utf8'))
@@ -909,7 +910,7 @@ console.log('== Pixiv（FakeFetcher 全流程）');
       eq(r.total, 45, '45 章全列出');
       eq(r.saved, 45, '45 章全保存');
       eq(fake.calls.filter((u) => u.includes('series_content')).length, 2, '系列列表只翻 2 页');
-      ok(fs.existsSync(path.join(tmp, '测试作者', '测试系列', '045 第45话.txt')), '末章文件存在');
+      ok(fs.existsSync(core.writer.chapterPath('测试作者', '999', '测试系列', 45, '第45话', '701')), '末章文件存在');
     }
 
     // 单篇 + 系列导航
@@ -946,9 +947,9 @@ console.log('== Pixiv（FakeFetcher 全流程）');
         return origGet(url);
       };
       const updates = await core.checkUpdates({});
-      eq(updates.length, 1, '检测到 1 个系列有更新');
-      eq(updates[0].newCount, 5, '新章数 5');
-      ok(fs.existsSync(path.join(tmp, '测试作者', '测试系列', '005 第五章 新增.txt')), '新章已落盘');
+      eq(updates.updates.length, 1, '检测到 1 个系列有更新');
+      eq(updates.updates[0].newCount, 5, '新章数 5');
+      ok(fs.existsSync(core.writer.chapterPath('测试作者', '999', '测试系列', 5, '第五章 新增', '703')), '新章已落盘');
     }
 
     // Cookie 熔断 + 目标级失败

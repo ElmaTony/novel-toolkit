@@ -93,7 +93,7 @@ body.vscode-high-contrast:not([data-theme]),body.vscode-high-contrast-light:not(
         <div class="connection"><span class="cookie" id="cookieChip">Cookie 未设置</span><button type="button" data-run="pixivSetCookie">管理 Cookie ›</button></div>
         <div class="section-head"><h2>已抓系列 <span class="muted" id="seriesCount"></span></h2><button type="button" data-task-start data-run="pixivUpdate">${icon('refresh')}检查更新</button></div>
         <div id="series"><div class="empty">还没有已抓系列</div></div>
-        <details class="details"><summary>抓取选项<span class="chevron" aria-hidden="true">⌄</span></summary><label class="force-row"><input type="checkbox" id="forceGrab"><span>强制重抓</span></label><p class="force-note">先清除目标旧文件与记录。系列目录中的手动修改也会被删除，请先备份。</p><div class="meta-line" id="pixivMeta"></div></details>
+        <details class="details"><summary>抓取选项<span class="chevron" aria-hidden="true">⌄</span></summary><label class="force-row"><input type="checkbox" id="forceGrab"><span>强制重抓</span></label><p class="force-note">下载成功后备份并替换目标文件；失败时保留原文，旧版目录保留。</p><div class="meta-line" id="pixivMeta"></div></details>
       </section>
       <section id="source-cool18" role="tabpanel" aria-labelledby="cool18Source" hidden>
         <p class="eyebrow">COOL18 LIBRARY</p><h2 class="grab-heading">沿着章节，继续读。</h2><p class="grab-intro">跟随帖内章节链接，或按给定列表顺序抓取。</p>

@@ -2,7 +2,7 @@
   "name": "novel-toolkit",
   "displayName": "小说工具箱 Novel Toolkit",
   "description": "纸墨主题的小说工具箱：空白、短行与引号检查，段落整理、繁简转换、章节导航、文件夹批量整理，以及 cool18/Pixiv 小说抓取。",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "publisher": "localtools",
   "license": "MIT",
   "repository": {
@@ -264,7 +264,7 @@
         "novelToolkit.indentStartsParagraph": {
           "type": "boolean",
           "default": true,
-          "description": "合并换行时，把行首有缩进的行视为新段落的开头"
+          "description": "合并换行时把行首缩进视为新段落开头；关闭后不使用缩进分段，已识别章节标题仍独立保留"
         },
         "novelToolkit.smartParagraphs": {
           "type": "boolean",
@@ -315,13 +315,13 @@
           "type": "number",
           "default": 1,
           "minimum": 0,
-          "description": "cool18 相邻请求间隔秒数（实际会 ±20% 抖动；默认 1.0 秒）"
+          "description": "cool18 相邻请求间隔秒数（实际会 ±20% 抖动；默认 1.0 秒，0 表示不额外等待）"
         },
         "novelToolkit.cool18MaxPages": {
           "type": "number",
           "default": 300,
           "minimum": 1,
-          "description": "cool18 爬全本时最多抓多少帖（防失控）"
+          "description": "cool18 自动遍历的帖子访问上限，重复帖及失败后重新排队也计入，防止遍历失控"
         },
         "novelToolkit.cool18MaxRetries": {
           "type": "number",

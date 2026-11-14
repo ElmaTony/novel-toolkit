@@ -9,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const transforms = require('../engine/transforms');
 const { decodeToUtf8 } = require('../engine/encoding');
+const { AnalysisWorker } = require('../engine/analysis-worker');
 
 const TXT_RE = /\.txt$/i;
 const BAK_RE = /\.bak$/i;
@@ -57,7 +58,7 @@ function writeBackupOnce(file, buf) {
   if (fs.existsSync(bak)) {
     return false;
   }
-  fs.writeFileSync(bak, buf);
+  try { fs.writeFileSync(bak, buf, { flag: 'wx' }); } catch (e) { if (e.code === 'EEXIST') return false; throw e; }
   return true;
 }
 
@@ -76,7 +77,7 @@ class BatchProcessor {
   }
 
   // 整理流水线: 合并换行 → 去缩进 → 加缩进（可选 .bak 备份）
-  processOne(file, opts) {
+  processOne(file, opts, prepared) {
     const o = Object.assign(
       {
         indentStartsParagraph: true,
@@ -91,19 +92,21 @@ class BatchProcessor {
       },
       opts
     );
-    const buf = fs.readFileSync(file);
-    const det = decodeToUtf8(buf);
+    const buf = prepared ? prepared.buf : fs.readFileSync(file);
+    const det = prepared ? prepared.det : decodeToUtf8(buf);
     const sourceEncoding = det.encoding;
     const original = det.text;
+    if (original.includes('\uFFFD') || original.includes('\u0000')) return { file, sourceEncoding, changed: false, skipped: true, needsReview: true, merged: 0, paragraphs: 0 };
     const lines = original.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n');
 
-    const r = transforms.mergeLines(lines, {
+    const r = prepared ? prepared.result.merged : transforms.mergeLines(lines, {
       indentStartsParagraph: o.indentStartsParagraph,
       smartParagraphs: o.smartParagraphs,
       keepBlankLines: o.keepBlankLines,
+      chapterPattern: o.chapterPattern,
     });
     const dd = transforms.dedentLines(r.lines);
-    const id = transforms.indentLines(dd.lines, {
+    const id = prepared ? prepared.result.indented : transforms.indentLines(dd.lines, {
       indentString: o.indentString,
       skipChapterTitles: o.skipChapterTitles,
       chapterPattern: o.chapterPattern,
@@ -132,6 +135,8 @@ class BatchProcessor {
   async processFolder(folder, opts = {}) {
     const files = this.list(folder);
     const results = { total: files.length, changed: 0, unchanged: 0, errors: [], needsReview: [], files: [] };
+    const analysis = new AnalysisWorker();
+    try {
     for (const file of files) {
       await yieldToHost();
       if (this.cancelled || isCancelled(opts.signal)) {
@@ -139,7 +144,18 @@ class BatchProcessor {
         break;
       }
       try {
-        const r = this.processOne(file, opts);
+        let prepared;
+        if (fs.statSync(file).size > 512000) {
+          const buf = await fs.promises.readFile(file);
+          const det = decodeToUtf8(buf);
+          const workerOptions = {};
+          for (const key of ['indentStartsParagraph', 'smartParagraphs', 'keepBlankLines', 'indentString', 'skipChapterTitles', 'normalizeExisting', 'chapterPattern']) { if (opts[key] !== undefined) workerOptions[key] = opts[key]; }
+          const result = await analysis.run('batch', { text: det.text, options: workerOptions });
+          if (this.cancelled || isCancelled(opts.signal)) { results.cancelled = true; break; }
+          if (!buf.equals(await fs.promises.readFile(file))) throw new Error('处理期间文件已修改，跳过写入');
+          prepared = { buf, det, result };
+        }
+        const r = this.processOne(file, opts, prepared);
         results.files.push(r);
         if (r.changed) results.changed++;
         else results.unchanged++;
@@ -149,6 +165,7 @@ class BatchProcessor {
         results.errors.push(file + ' (' + e.message + ')');
       }
     }
+    } finally { analysis.dispose(); }
     return results;
   }
 

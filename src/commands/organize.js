@@ -25,9 +25,10 @@ function registerOrganizeCommands({ reg, panel, checker, cfg }) {
     const r = transforms.mergeLines(docLines(editor.document), {
       indentStartsParagraph: cfg().get('indentStartsParagraph', true),
       smartParagraphs: cfg().get('smartParagraphs', true),
-      keepBlankLines: cfg().get('keepBlankLines', true)
+      keepBlankLines: cfg().get('keepBlankLines', true),
+      chapterPattern: cfg().get('chapterPattern')
     });
-    if (r.merged === 0) {
+    if (r.lines.join('\n') === docLines(editor.document).join('\n')) {
       const hint = r.indentParagraphs > 0
         ? '（已识别小说排版：' + r.indentParagraphs + ' 个缩进段落，但没有可合并的段内换行）'
         : '（未识别到小说排版特征：既没有段首缩进，也没有可合并的段内换行）';
@@ -283,4 +284,5 @@ function registerOrganizeCommands({ reg, panel, checker, cfg }) {
   });
 }
 
-module.exports = { registerOrganizeCommands };
+function disposeOrganize() { if (_t2sChannel) { _t2sChannel.dispose(); _t2sChannel = null; } }
+module.exports = { registerOrganizeCommands, disposeOrganize };

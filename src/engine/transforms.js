@@ -154,6 +154,7 @@ function mergeLines(lines, opts) {
   }
   const indentUniversal = nonBlank > 0 && indented / nonBlank >= 0.8;
 
+  const chapterSet = new Set(require('./chapters').chapterLines(lines, o.chapterPattern));
   const out = [];
   let buf = null;
   let merged = 0;
@@ -165,7 +166,9 @@ function mergeLines(lines, opts) {
       buf = null;
     }
   };
-  for (const raw of lines) {
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const raw = lines[lineIndex];
+    if (chapterSet.has(lineIndex)) { flush(); out.push(raw.replace(/\s+$/, '')); paragraphs++; continue; }
     if (isBlank(raw)) {
       flush();
       if (o.keepBlankLines) {
@@ -185,7 +188,7 @@ function mergeLines(lines, opts) {
       if (!piece) {
         continue;
       }
-      const startsIndent = k === 0 && /^\s/.test(raw);
+      const startsIndent = o.indentStartsParagraph && k === 0 && /^\s/.test(raw);
       let startsNew;
       if (k > 0 || buf === null) {
         startsNew = true;

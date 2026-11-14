@@ -3,27 +3,6 @@
 // 编码检测与解码（纯 Node, 无 vscode 依赖）
 // 针对简中小说场景: UTF-8 / UTF-8 BOM / UTF-16 LE/BE / GB18030(兼容 GBK/GB2312) / Big5
 
-function isAscii(buf) {
-  for (let i = 0; i < buf.length; i++) {
-    if (buf[i] > 0x7F) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function hasCJK(s) {
-  for (const ch of s) {
-    const c = ch.codePointAt(0);
-    if ((c >= 0x4E00 && c <= 0x9FFF) || (c >= 0x3400 && c <= 0x4DBF) ||
-        (c >= 0x3040 && c <= 0x30FF) || (c >= 0x3000 && c <= 0x303F) ||
-        (c >= 0xFF00 && c <= 0xFFEF) || (c >= 0xF900 && c <= 0xFAFF)) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function safeDecoder(enc) {
   try {
     return new TextDecoder(enc);
@@ -71,7 +50,7 @@ function scoreDoubleByte(buf, enc) {
 // 且奇偶位置严格分区——GB/Big5 双字节序列没有这种位置规律。返回 'utf16le' | 'utf16be' | null
 function looksLikeUtf16(buf) {
   const n = Math.min(buf.length, 8192) & ~1;
-  if (n < 64) {
+  if (n < 4) {
     return null;
   }
   let zeros = 0;
@@ -111,32 +90,14 @@ function detectEncoding(buf) {
   if (buf.length >= 3 && buf[0] === 0xEF && buf[1] === 0xBB && buf[2] === 0xBF) {
     return 'utf8bom';
   }
-  if (isAscii(buf)) {
-    return 'utf8';
-  }
-  // 无 BOM UTF-16 识别（必须在 GB/Big5 之前：GB18030 几乎对任意字节序列都"合法"，会抢先胜出）
-  const u16 = looksLikeUtf16(buf);
-  if (u16) {
-    return u16;
-  }
-  // 严格 UTF-8 能解通: 含中文 → utf8; 完全没有中文且高字节密集 →
-  // 大概率是 GB 系文本被误读成西里尔/拉丁（GB 字节常恰好是合法 UTF-8 序列）
-  try {
-    const utf = new TextDecoder('utf-8', { fatal: true }).decode(buf);
-    if (hasCJK(utf)) {
-      return 'utf8';
-    }
-    let high = 0;
-    for (let i = 0; i < buf.length; i++) {
-      if (buf[i] > 0x7F) {
-        high++;
-      }
-    }
-    if (high / buf.length < 0.2) {
-      return 'utf8';
-    }
-  } catch (e) { /* 不是严格 UTF-8, 继续判 GB/Big5 */ }
 
+  // BOM 之外的歧义字节优先按合法 UTF-8 保留；含 NUL 时再识别 UTF-16。
+  if (!buf.includes(0)) {
+    try { new TextDecoder('utf-8', { fatal: true }).decode(buf); return 'utf8'; }
+    catch (e) { /* 不是 UTF-8 */ }
+  }
+  const u16 = looksLikeUtf16(buf);
+  if (u16) return u16;
   const gb = scoreDoubleByte(buf, 'gb18030');
   const big5 = scoreDoubleByte(buf, 'big5');
   // 高频特征字是"可读性"的直接证据：GB 解 Big5 文本会得到一堆罕用字，特征字命中≈0。

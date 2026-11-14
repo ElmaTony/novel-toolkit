@@ -40,6 +40,9 @@ function registerFileCommands({ reg, panel, checker }) {
         /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$/i.test(stem)) {
       return vscode.window.showErrorMessage('文件名含非法字符/Windows 保留名（CON、NUL 等），或以点/空格结尾');
     }
+    if (/[\\/:*?"<>|]/.test(clean) || path.basename(clean) !== clean || path.dirname(path.resolve(dir, clean)) !== path.resolve(dir)) {
+      return vscode.window.showErrorMessage('请输入文件名，不能包含目录或路径分隔符');
+    }
     const newUri = vscode.Uri.file(path.join(dir, clean));
     try {
       await vscode.workspace.fs.rename(doc.uri, newUri, { overwrite: false });

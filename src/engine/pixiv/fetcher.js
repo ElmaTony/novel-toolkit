@@ -23,13 +23,7 @@ class PixivError extends Error {
 }
 
 // 可中断 sleep：signal 触发时立即 reject（限速退避 300s 期间点"取消"不再干等）
-const sleep = (ms, signal) => new Promise((resolve, reject) => {
-  if (signal && signal.aborted) { reject(new Error('已取消')); return; }
-  const t = setTimeout(resolve, ms);
-  if (signal) {
-    signal.addEventListener('abort', () => { clearTimeout(t); reject(new Error('已取消')); }, { once: true });
-  }
-});
+const { sleep } = require('../async');
 
 // 接受裸 PHPSESSID 值、键值对、或整段 Cookie 头，统一归一成可直接注入的 Cookie 头
 function extractCookie(input) {
@@ -67,6 +61,7 @@ class Fetcher {
     this.log = opts.log || (() => {});
     this.signal = null; // 当前任务的 AbortSignal（由 PixivCore 每次任务入口赋值）
     this._lastStart = 0;
+    this._paceTail = Promise.resolve();
     this._useProxy = !!this.proxy;
     this._active = 0;
     this._queue = [];
@@ -84,10 +79,17 @@ class Fetcher {
 
   // 相邻请求起步间隔 ≥ intervalMs ± 30%
   async _pace() {
-    const gap = this.intervalMs * (1 + (Math.random() * 0.6 - 0.3));
-    const wait = this._lastStart + gap - Date.now();
-    if (wait > 0) await sleep(wait, this.signal);
-    this._lastStart = Date.now();
+    const previous = this._paceTail;
+    let release;
+    this._paceTail = new Promise(resolve => { release = resolve; });
+    await previous;
+    try {
+      const gap = this.intervalMs * (1 + (Math.random() * 0.6 - 0.3));
+      const wait = this._lastStart + gap - Date.now();
+      if (wait > 0) await sleep(wait, this.signal);
+      if (this.signal && this.signal.aborted) throw new Error('已取消');
+      this._lastStart = Date.now();
+    } finally { release(); }
   }
 
   _flipChannel() { if (this.proxy) this._useProxy = !this._useProxy; }

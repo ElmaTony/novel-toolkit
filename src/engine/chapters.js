@@ -209,7 +209,7 @@ const FW_DIG_MAP = { '０': '0', '１': '1', '２': '2', '３': '3', '４': '4',
 // 从章节行提取编号: 第12章→12, 第十二章→12, 第一千零二十四章→1024; 序章/番外→null
 function chapterNumber(title) {
   const m = String(title || '').match(/第\s*([0-9０-９〇零一二三四五六七八九十百千万两]+)\s*[章节回集话]/);
-  if (!m) { return null; }
+  if (!m) { const english = String(title || '').match(/\bchapter\s*(\d+)/i); return english ? Number(english[1]) : null; }
   const raw = m[1].replace(/[０-９]/g, (c) => FW_DIG_MAP[c]);
   if (/^\d+$/.test(raw)) { return Number(raw); }
   const n = cnNumeral(raw);
@@ -241,10 +241,12 @@ function chapterGaps(lines, pattern) {
       const n = chapterNumber(e.title);
       if (n === null || n <= 0) { unparsed++; } else { numbers.push(n); }
     }
-    const dup = numbers.filter((n, i) => numbers.indexOf(n) !== i);
+    const frequencies = new Map();
+    for (const n of numbers) frequencies.set(n, (frequencies.get(n) || 0) + 1);
+    const dup = [...frequencies.keys()].filter(n => frequencies.get(n) > 1);
     for (const n of new Set(dup)) {
       totalDuplicates++;
-      duplicateSamples.push('第' + n + '章×' + numbers.filter((x) => x === n).length);
+      duplicateSamples.push('第' + n + '章×' + frequencies.get(n));
     }
     let missing = [];
     let min = 0;
@@ -252,14 +254,19 @@ function chapterGaps(lines, pattern) {
     if (numbers.length) {
       min = Math.min(...numbers);
       max = Math.max(...numbers);
-      if (max - min + 1 <= 5000) {
-        for (let i = min; i <= max; i++) {
-          if (!numbers.includes(i)) { missing.push(i); }
-        }
+      const sorted = [...frequencies.keys()].sort((a, b) => a - b);
+      for (let index = 1; index < sorted.length; index++) {
+        const first = sorted[index - 1] + 1;
+        const last = sorted[index] - 1;
+        if (last < first) continue;
+        if (last - first < 5000 && missing.length + last - first + 1 <= 5000) {
+          for (let n = first; n <= last; n++) missing.push(n);
+        } else missing.push(first === last ? String(first) : first + '–' + last);
+        totalMissing += last - first + 1;
       }
     }
     totalChapters += g.length;
-    totalMissing += missing.length;
+
     totalUnparsed += unparsed;
     groups.push({ count: g.length, numbered: numbers.length, unparsed, min, max, missing, duplicates: [...new Set(dup)] });
   }

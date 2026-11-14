@@ -37,12 +37,10 @@ for (const k of (pkg.contributes.keybindings || [])) {
 }
 // 4) 代码读取的 novelToolkit 设置项必须在 package.json 声明
 //    （globalState 键不在 settings 里, 显式排除）
-const GLOBAL_STATE_KEYS = new Set(['scrapeHistory']);
 const cfgUsed = new Set();
 for (const src of [extSrc, engineSrc, serviceSrc, uiSrc]) {
-  for (const m of src.matchAll(/\.get\(['"]novelToolkit\.([a-zA-Z0-9]+)['"]/g)) {
-    if (!GLOBAL_STATE_KEYS.has(m[1])) cfgUsed.add(m[1]);
-  }
+  // 只匹配 novelToolkit 配置对象及其局部别名；旧配置/私密存储不混入。
+  for (const match of src.matchAll(/(?:\bc|\bcfg\(\)|\bCFG\(\)|this\.cfg\(\)|vscode\.workspace\.getConfiguration\('novelToolkit'\))\.get\(['"]([a-zA-Z0-9]+)['"]/g)) cfgUsed.add(match[1]);
 }
 const cfgDeclared = new Set(Object.keys(pkg.contributes.configuration.properties).map((k) => k.replace('novelToolkit.', '')));
 for (const c of cfgUsed) {
@@ -62,6 +60,7 @@ for (const c of hostCmds) {
   }
 }
 
+console.log('已审计设置读取: ' + cfgUsed.size);
 console.log('命令注册: ' + regged.size + ' | 设置项声明: ' + cfgDeclared.size +
   ' | 快捷键: ' + (pkg.contributes.keybindings || []).length +
   ' | RUNNABLE: ' + msgRun.length + ' | HOST_COMMANDS: ' + hostCmds.length);

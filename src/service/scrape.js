@@ -32,6 +32,14 @@ class ScrapeManager {
     this.taskText = '';
     this.onTask = null; // (running, text) => void —— 面板任务行
     this.lastCool18Out = '';
+    this.snapshotCache = null;
+    this.tokenLinks = new Set();
+    context.subscriptions.push({ dispose: () => {
+      this.cancel();
+      for (const link of this.tokenLinks) link.dispose();
+      this.tokenLinks.clear();
+      this.channel.dispose();
+    } });
   }
 
   log(msg) {
@@ -43,6 +51,17 @@ class ScrapeManager {
     if (this.onTask) {
       this.onTask(running, text);
     }
+  }
+
+  bindToken(token, controller) {
+    if (!token) return null;
+    if (token.isCancellationRequested) controller.abort();
+    const link = token.onCancellationRequested(() => controller.abort());
+    this.tokenLinks.add(link);
+    return link;
+  }
+  releaseToken(link) {
+    if (link) { link.dispose(); this.tokenLinks.delete(link); }
   }
 
   get busy() {
@@ -126,7 +145,7 @@ class ScrapeManager {
     return new Cool18Core({
       outputRoot: this.cool18OutputRoot(),
       proxy: trim(pick(c.get('cool18Proxy'), OLD_COOL18().get('proxy', 'http://127.0.0.1:7897'))),
-      delayMs: (Number(pick(c.get('cool18Delay'), OLD_COOL18().get('delay', 1.0))) || 1.0) * 1000,
+      delayMs: Math.max(0, Number(pick(c.get('cool18Delay'), OLD_COOL18().get('delay', 1.0)))) * 1000,
       maxPages: Number(pick(c.get('cool18MaxPages'), OLD_COOL18().get('maxPages', 300))) || 300,
       maxRetries: Number(c.get('cool18MaxRetries')) || 4,
       cleanAds: c.get('scrapeCleanAds', true) !== false,
@@ -146,7 +165,7 @@ class ScrapeManager {
       return { msg: '已有抓取任务进行中，请等它完成或先取消' };
     }
     const controller = new AbortController();
-    if (token) token.onCancellationRequested(() => controller.abort());
+    const tokenLink = this.bindToken(token, controller);
     this.active = { label: 'cool18', controller };
     this.task(true, '正在连接 cool18…');
     let result = null;
@@ -172,6 +191,7 @@ class ScrapeManager {
       result = { error: e.message, aborted: /已取消/.test(e.message) };
     } finally {
       this.active = null;
+      this.releaseToken(tokenLink);
     }
     let msg;
     if (result.error) {
@@ -202,15 +222,24 @@ class ScrapeManager {
       return [];
     }
     const controller = new AbortController();
-    if (token) token.onCancellationRequested(() => controller.abort());
-    const core = this.buildCool18();
-    return core.search(keyword, { signal: controller.signal });
+    const tokenLink = this.bindToken(token, controller);
+    this.active = { label: 'cool18-search', controller };
+    this.task(true, '正在搜索 cool18…');
+    try {
+      const result = await this.buildCool18().search(keyword, { signal: controller.signal });
+      this.task(false, controller.signal.aborted ? '搜索已取消' : '搜索完成：' + result.length + ' 个结果');
+      return result;
+    } catch (e) {
+      this.log('搜索失败: ' + e.message);
+      this.task(false, controller.signal.aborted ? '搜索已取消' : '搜索失败：' + e.message);
+      return [];
+    } finally { this.active = null; this.releaseToken(tokenLink); }
   }
 
   // ---------- Pixiv ----------
 
   // reporter: { report(text), finish(_result, msg) }; token: CancellationToken（可选）
-  // opts.force: 强制重抓 —— 先清除目标的旧文件与 manifest 记录，再从零下载
+  // opts.force: 强制重抓 —— 成功下载后备份并替换目标文件，失败时保留旧内容
   // 返回 { saved, failures, aborted, authError } 或 null（msg 里给出未执行原因）
   async executePixiv(targets, reporter, token, { force = false } = {}) {
     if (!targets.length) {
@@ -222,7 +251,7 @@ class ScrapeManager {
       return { msg: '已有抓取任务进行中，请等它完成或先取消' };
     }
     const controller = new AbortController();
-    if (token) token.onCancellationRequested(() => controller.abort());
+    const tokenLink = this.bindToken(token, controller);
     this.active = { label: 'pixiv', controller };
     this.task(true, '正在连接 Pixiv…');
     const saved = [];
@@ -246,7 +275,7 @@ class ScrapeManager {
         try {
           if (force && (t.type === 'series' || t.type === 'novel')) {
             const cleared = t.type === 'series' ? core.clearSeries(t.id) : core.clearNovel(t.id);
-            if (cleared) reporter.report('强制重抓：已清除 ' + t.type + ':' + t.id + ' 的旧记录与文件');
+            if (cleared) reporter.report('强制重抓：已准备备份替换 ' + t.type + ':' + t.id + ' 的文件');
           }
           const r = t.type === 'series'
             ? await core.downloadSeries(t.id, ctx)
@@ -254,12 +283,17 @@ class ScrapeManager {
               ? await core.downloadUser(t.id, ctx)
               : await core.downloadNovel(t.id, ctx);
           saved.push(r);
+          if (Array.isArray(r.failures)) failures.push(...r.failures.map(f => typeof f === 'string' ? f : t.type + ':' + t.id + ' / ' + f.id + ': ' + f.message));
           if (t.type === 'novel' && r.seriesNav && !core.writer.manifest.series[r.seriesNav.seriesId] && !controller.signal.aborted) {
             const pickAns = await vscode.window.showInformationMessage(
               '《' + r.title + '》属于系列《' + r.seriesNav.seriesTitle + '》（第 ' + r.seriesNav.order + ' 话），要顺手抓全系列吗？',
               '抓全系列', '不用'
             );
-            if (pickAns === '抓全系列') saved.push(await core.downloadSeries(r.seriesNav.seriesId, ctx));
+            if (pickAns === '抓全系列') {
+              const seriesResult = await core.downloadSeries(r.seriesNav.seriesId, ctx);
+              saved.push(seriesResult);
+              failures.push(...seriesResult.failures.map(f => f.id + ': ' + f.message));
+            }
           }
         } catch (e) {
           if (e instanceof PixivError && e.kind === 'auth') { authError = true; break; }
@@ -267,9 +301,9 @@ class ScrapeManager {
           this.log('失败 ' + t.type + ':' + t.id + ' (' + (e.kind || 'error') + '): ' + e.message);
         }
       }
-      this.log('处理结束：新增 ' + saved.filter((r) => r && !r.skipped).length + '，失败 ' + failures.length +
+      this.log('处理结束：新增 ' + this.savedCount(saved) + '，失败 ' + failures.length +
         (controller.signal.aborted ? '，已取消' : ''));
-      if (saved.some((r) => r && !r.skipped)) {
+      if (this.savedCount(saved) > 0) {
         this.recordHistory({
           kind: 'pixiv',
           label: '新增 ' + saved.filter((r) => r && !r.skipped).length + ' 项',
@@ -283,6 +317,7 @@ class ScrapeManager {
       else failures.push('任务异常: ' + ((e && e.message) || e));
     } finally {
       this.active = null;
+      this.releaseToken(tokenLink);
     }
     const out = { saved, failures, aborted: controller.signal.aborted, authError };
     this.task(false, this.summarizePixiv(out));
@@ -290,9 +325,13 @@ class ScrapeManager {
     return out;
   }
 
+  savedCount(results) {
+    return results.reduce((n, x) => n + (x ? x.type === 'novel' ? (x.skipped ? 0 : 1) : Number(x.saved) || 0 : 0), 0);
+  }
+
   summarizePixiv(r) {
-    const newCount = r.saved.filter((x) => x && !x.skipped).length;
-    let msg = 'Pixiv 抓取完成：新增 ' + newCount + ' 项';
+    const newCount = this.savedCount(r.saved);
+    let msg = (r.authError ? 'Pixiv 需要更新 Cookie：' : r.failures.length ? 'Pixiv 抓取部分失败：' : 'Pixiv 抓取完成：') + '新增 ' + newCount + ' 篇/章';
     if (r.aborted) msg += '（已取消，进度已记录，可再次运行续传）';
     if (r.failures.length) {
       msg += '；失败 ' + r.failures.length + ' 项：' + r.failures.slice(0, 3).join('；') + (r.failures.length > 3 ? ' 等' : '');
@@ -314,7 +353,7 @@ class ScrapeManager {
       return { msg };
     }
     const controller = new AbortController();
-    if (token) token.onCancellationRequested(() => controller.abort());
+    const tokenLink = this.bindToken(token, controller);
     this.active = { label: 'pixiv-update', controller };
     this.task(true, '正在检查 Pixiv 系列更新…');
     const updates = [];
@@ -331,7 +370,9 @@ class ScrapeManager {
         },
       };
       try {
-        (await core.checkUpdates(ctx)).forEach((u) => updates.push(u));
+        const checked = await core.checkUpdates(ctx);
+        updates.push(...(Array.isArray(checked) ? checked : checked.updates));
+        failures.push(...(checked.failures || []));
       } catch (e) {
         if (e instanceof PixivError && e.kind === 'auth') authError = true;
         else failures.push(e.message);
@@ -343,10 +384,13 @@ class ScrapeManager {
       this.log('增量更新异常: ' + ((e && e.message) || e));
     } finally {
       this.active = null;
+      this.releaseToken(tokenLink);
     }
     if (failures.length) this.log('增量更新失败项: ' + failures.join('；'));
-    const msg = updates.length
-      ? '更新完成：' + updates.map((u) => '《' + u.title + '》+' + (u.newCount - u.oldCount) + '章').join('、')
+    const msg = controller.signal.aborted ? '更新检查已取消，已完成进度已保存'
+      : authError ? '更新检查失败：Cookie 缺失或已失效'
+      : failures.length ? '更新检查有 ' + failures.length + ' 项失败，详见日志' + (updates.length ? '；已处理 ' + updates.length + ' 个系列' : '')
+      : updates.length ? '更新完成：' + updates.map(u => '《' + u.title + '》新增 ' + u.saved + ' 章').join('、')
       : '全部已抓系列均无更新';
     this.task(false, msg);
     reporter && reporter.finish({ updates }, msg);
@@ -356,21 +400,19 @@ class ScrapeManager {
   // ---------- 面板快照 ----------
 
   snapshot() {
-    const cookieNow = null;
     let series = [];
     let novelCount = 0;
     try {
-      const core = this.buildPixivCore('');
-      series = Object.entries(core.writer.manifest.series).map(([id, e]) => ({
-        id,
-        title: e.title || id,
-        author: e.author || '',
-        count: e.count || (e.files || []).length,
-      }));
-      novelCount = Object.keys(core.writer.manifest.novels).length;
-    } catch (e) {
-      this.log('读取 manifest 失败: ' + e.message);
-    }
+      const file = path.join(this.pixivOutputRoot(), 'pixiv-manifest.json');
+      const stat = fs.existsSync(file) ? fs.statSync(file) : null;
+      const key = file + ':' + (stat ? stat.mtimeMs + ':' + stat.ctimeMs + ':' + stat.size : 'missing');
+      if (!this.snapshotCache || this.snapshotCache.key !== key) {
+        const manifest = stat ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
+        series = Object.entries(manifest.series || {}).map(([id, e]) => ({ id, title: e.title || id, author: e.author || '', count: e.count || (e.files || []).length }));
+        novelCount = Object.keys(manifest.novels || {}).length;
+        this.snapshotCache = { key, series, novelCount };
+      } else ({ series, novelCount } = this.snapshotCache);
+    } catch (e) { this.log('读取 manifest 失败: ' + e.message); }
     return {
       busy: this.busy,
       taskText: this.taskText,
@@ -389,8 +431,10 @@ class ScrapeManager {
   recordHistory(entry) {
     try {
       const list = this.context.globalState.get('novelToolkit.scrapeHistory', []);
-      list.unshift(Object.assign({ date: new Date().toISOString() }, entry));
-      this.context.globalState.update('novelToolkit.scrapeHistory', list.slice(0, 50));
+      const next = [...list];
+      next.unshift(Object.assign({ date: new Date().toISOString() }, entry));
+      const stored = this.context.globalState.update('novelToolkit.scrapeHistory', next.slice(0, 50));
+      if (stored && stored.catch) stored.catch(error => this.log('记录历史失败: ' + error.message));
     } catch (e) { /* 记录失败不影响抓取 */ }
   }
 
