@@ -2,15 +2,15 @@
 
 # Novel Toolkit · 小说工具箱
 
-**A Paper-and-Ink VS Code workbench for scraping, proofreading, formatting, and navigating Chinese novels**
+**A Vermilion-and-Ink VS Code workbench for scraping, proofreading, formatting, and navigating Chinese novels**
 
 <p>
   <a href="https://github.com/ElmaTony/novel-toolkit/releases/latest">
-    <img src="https://img.shields.io/badge/Release-Universal%20%2F%20Multi--Platform%20VSIX-476854?style=flat-square" alt="Latest Release" />
+    <img src="https://img.shields.io/badge/Release-Universal%20%2F%20Multi--Platform%20VSIX-2A2622?style=flat-square" alt="Latest Release" />
   </a>
-  <img src="https://img.shields.io/badge/VS%20Code-1.70%2B-252E28?style=flat-square" alt="VS Code 1.70+" />
-  <img src="https://img.shields.io/badge/Runtime-Pure%20JavaScript-3E5B48?style=flat-square" alt="Pure JavaScript" />
-  <img src="https://img.shields.io/badge/Theme-Paper%20%26%20Ink%20Light%2FDark-657067?style=flat-square" alt="Paper and Ink Theme" />
+  <img src="https://img.shields.io/badge/VS%20Code-1.70%2B-6C6459?style=flat-square" alt="VS Code 1.70+" />
+  <img src="https://img.shields.io/badge/Runtime-Pure%20JavaScript-837A6D?style=flat-square" alt="Pure JavaScript" />
+  <img src="https://img.shields.io/badge/Theme-Vermilion%20%26%20Ink%20Light%2FDark-B03A28?style=flat-square" alt="Vermilion and Ink Theme" />
   <a href="LICENSE">
     <img src="https://img.shields.io/badge/License-MIT-6A645B?style=flat-square" alt="MIT License" />
   </a>
@@ -24,7 +24,7 @@
   <a href="https://github.com/ElmaTony/novel-toolkit/releases/latest">Download Latest</a> ·
   <a href="#key-features">Key Features</a> ·
   <a href="#quick-start">Quick Start</a> ·
-  <a href="#paper--ink-workbench">Paper &amp; Ink Workbench</a> ·
+  <a href="#vermilion--ink-workbench">Vermilion &amp; Ink Workbench</a> ·
   <a href="#novel-scraping">Novel Scraping</a> ·
   <a href="#developer-guide">Developer Guide</a>
 </p>
@@ -38,8 +38,8 @@
 <table>
   <tr>
     <td width="50%">
-      <strong>🪶 Paper &amp; Ink Workbench</strong><br />
-      Warm off-white paper canvas with pine-green accents and a matching dark mode. Switch between Follow VS Code, Light, and Dark with zero external fonts or scripts loaded.
+      <strong>🖌️ Vermilion &amp; Ink Workbench</strong><br />
+      Ink-first design with vermilion used like an editor's red pen: issue counts, the current chapter, and focus are marked in vermilion while everything else stays quiet. Includes Rice Paper (light) and Night Ink (dark), follows VS Code or switches manually, and splits into a tools column plus full-height outline on wide panels. No external fonts or scripts.
     </td>
     <td width="50%">
       <strong>🔍 Proofreading &amp; Chapter Navigation</strong><br />
@@ -100,25 +100,26 @@ Checks only highlight diagnostics without modifying text. Formatting on the acti
 
 ---
 
-## Paper &amp; Ink Workbench
+## Vermilion &amp; Ink Workbench
 
-Press `Alt+F10` / `Alt+F11` or click **小说工具箱** in the status bar to open the panel. Use the top-right buttons to cycle **Follow VS Code / Light / Dark** themes or jump straight to extension settings.
+Press `Alt+F10` / `Alt+F11` or click **小说工具箱** in the status bar to open the panel. The header combines the Organize / Scrape tabs; the top-right theme button cycles **Follow VS Code / Rice Paper / Night Ink** (its icon reflects the current mode) and the settings button opens extension settings. At 640px or wider, the Organize tab splits into a tools column and a full-height outline; on narrow panels the sections stack and only the outline scrolls when the cursor moves.
 
 | Theme Mode | Canvas / Accent | Style |
 | --- | :---: | --- |
-| **Paper &amp; Ink Light** | `#F7F7F1` · `#476854` | Warm off-white paper with muted pine green |
-| **Paper &amp; Ink Dark** | `#202822` · `#AAC7AC` | Deep ink slate with soft sage green for low-fatigue editing |
+| **Rice Paper (Light)** | `#F4F0E6` · `#B03A28` | Warm rice-paper canvas, ink-black primary buttons, vermilion only for annotations and position |
+| **Night Ink (Dark)** | `#181715` · `#E2745D` | Warm charcoal with parchment text and soft vermilion for low-glare night editing |
 | **Follow VS Code** | Auto (including High Contrast) | Default mode synced with the active VS Code theme |
 
 ### Organize Tab Overview
 
 | Section | Capabilities |
 | --- | --- |
-| **File Bar** | Shows active filename and dirty/saved state; click filename to rename within the same directory |
-| **Full Scan** | Three-row summary for Whitespace (leading + mid/trailing spaces), Short Punctuation Lines, and Quote Pairs with prev/next jump controls |
-| **Primary Tools** | Merge Line Wraps, Remove Leading Indent, Add First-Line Indent, Remove Blank Lines |
-| **More Tools** | Blank Line Before Chapters, Unify Chapter Numbers, Traditional to Simplified Chinese (with frequency &amp; line-number output channel), Normalize Ellipses, Replace Corner Quotes, Fullwidth to Halfwidth, Check Missing/Duplicate Chapters, Batch Process Folder |
-| **Chapter Outline** | Volume-grouped chapter tree with search filtering, active-chapter highlight, Locate Current Chapter, and click-to-jump |
+| **File Bar** | Shows active filename and saved state (amber dot when unsaved); click filename to rename within the same directory |
+| **Proofread** | Three count cards for Whitespace (leading + mid/trailing spaces), Short Punctuation Lines, and Quote Pairs: vermilion counts for issues, green ✓ when clean, prev/next arrows to jump; a Resume banner appears when auto-checking is paused |
+| **Organize · Paragraphs** | In recommended order: Merge Line Wraps, Remove Leading Indent, Remove Blank Lines, Blank Line Before Chapters, Add First-Line Indent |
+| **Organize · Text** | Traditional to Simplified Chinese (with frequency &amp; line-number output channel), Normalize Ellipses, Replace Corner Quotes, Fullwidth to Halfwidth |
+| **Organize · Chapters &amp; Batch** | Check Missing/Duplicate Chapters, Unify Chapter Numbers, Batch Process Folder; the Organize section is collapsible and remembers its state |
+| **Outline** | Volume-grouped chapters with sticky volume headers, search filtering (Enter jumps to the first match, Esc clears), vermilion active-chapter highlight, Locate Current, previous/next chapter, and click-to-jump |
 
 > Quote pair checks compare opening and closing quote counts per line and work best after merging wrapped lines. Chapter detection, paragraph merging, and T2S conversion use heuristics—review changes against the original text when needed.
 
@@ -180,7 +181,7 @@ Both cool18 and Pixiv default to HTTP proxy **`http://127.0.0.1:7897`** (`novelT
 
 <br />
 
-Run **Batch Process Folder** from More Tools or the Command Palette to recursively process `.txt` files (symlinks and junctions are never followed; only one batch job runs at a time):
+Run **Batch Process Folder** from Organize · Chapters & Batch or the Command Palette to recursively process `.txt` files (symlinks and junctions are never followed; only one batch job runs at a time):
 
 - **Pipeline**: Merge line wraps → dedent → add first-line indent; modified files are atomically written as UTF-8 BOM + CRLF, while 0-byte empty files remain untouched.
 - **Backup &amp; Cancellation**: `novelToolkit.batchBackup` is enabled by default and saves `file.txt.bak` once without overwriting existing backups. Cancellation stops cleanly after the current file.
@@ -247,7 +248,7 @@ novel-toolkit/
 │   ├── commands/         # Domain-split commands (organize, navigation, files, batch, scrape)
 │   ├── engine/           # Pure engines: transforms, chapters, decoding, T2S, worker, cool18/Pixiv scrapers
 │   ├── service/          # Diagnostics checker, scrape coordinator, folder batch processor
-│   └── ui/               # Paper & Ink webview HTML, client script, and host-webview protocol
+│   └── ui/               # Vermilion & Ink webview HTML, client script, and host-webview protocol
 ├── scripts/              # OpenCC dictionary generator (gen-zh-data.js) and local installer (update.js)
 └── test/                 # Syntax, engine, panel, batch, command, wiring audit, and regression tests
 ```

@@ -69,7 +69,15 @@ ok('HTML 注入脚本与 panel-script 模块一致', !!m && m[1].trim() === webv
       { line: 0, title: '第一卷 开端', kind: 'volume' },
       { line: 1, title: '第一章 开始', kind: 'chapter' },
     ], wsCount: 1, midCount: 2, shortCount: 0, quoteCount: 0, silenced: false, hasDocument: true } });
-    ok('检查: 空白计数包含行首和正文', elements.countWs.textContent === '3 处');
+    ok('检查: 空白计数包含行首和正文', elements.countWs.textContent === '3' && elements.rowWs.className.includes('warn') && elements.rowWs.title === '空白：3 处');
+    ok('检查: 通过项标记为 ok', elements.countShort.textContent === '0' && elements.rowShort.className.includes('ok'));
+    ok('检查: 未暂停时隐藏恢复提示', elements.silenceNote.hidden === true);
+    listeners.message({ data: { type: 'update', silenced: true } });
+    ok('检查: 暂停时显示恢复提示并强调检查按钮', elements.silenceNote.hidden === false && elements.checkBtn.className.includes('emph') && elements.countWs.textContent === '—');
+    listeners.message({ data: { type: 'update', silenced: false } });
+    elements.toolsPanel.open = false;
+    elements.toolsPanel.listeners.toggle();
+    ok('整理: 工具区折叠状态写入偏好', api.state && api.state.toolsOpen === false);
     listeners.message({ data: { type: 'cursor', line: 1 } });
     listeners.message({ data: { type: 'scrapeState', state: {
       busy: false, taskText: '', cool18Out: 'x', cool18Proxy: '', pixivOut: 'y',
@@ -99,6 +107,7 @@ ok('HTML 注入脚本与 panel-script 模块一致', !!m && m[1].trim() === webv
     ok('进度: 仅按真实计数显示百分比', elements.taskProgressFill.style.width === '50%');
     listeners.message({ data: { type: 'task', running: false, text: '抓取失败：示例错误' } });
     ok('结果: 完成/错误消息保留显示', elements.taskText.textContent === '抓取失败：示例错误' && elements.cancelBtn.hidden);
+    ok('结果: 失败时状态点标红', elements.taskDot.className === 'dot error');
     ok('结果: 任务结束后清除强制重抓', elements.forceGrab.checked === false);
     click({ line: '42' });
     ok('章节: 点击时发送行号', api.posts.some((p) => p.command === 'chapter' && p.line === 42));

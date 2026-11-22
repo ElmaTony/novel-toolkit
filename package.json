@@ -1,8 +1,8 @@
 {
   "name": "novel-toolkit",
   "displayName": "小说工具箱 Novel Toolkit",
-  "description": "纸墨主题的小说工具箱：空白、短行与引号检查，段落整理、繁简转换、章节导航、文件夹批量整理，以及 cool18/Pixiv 小说抓取。",
-  "version": "0.18.3",
+  "description": "朱墨主题的小说工具箱：空白、短行与引号检查，段落整理、繁简转换、章节导航、文件夹批量整理，以及 cool18/Pixiv 小说抓取。",
+  "version": "0.19.0",
   "publisher": "localtools",
   "license": "MIT",
   "repository": {

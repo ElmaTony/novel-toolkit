@@ -8,13 +8,14 @@ const preferences = {
   tab: initial.tab === 'scrape' ? 'scrape' : 'organize',
   source: initial.source === 'cool18' ? 'cool18' : 'pixiv',
   search: typeof initial.search === 'string' ? initial.search : '',
-  moreOpen: !!initial.moreOpen,
+  toolsOpen: initial.toolsOpen !== false,
 };
 let data = { fileName: '正在读取文件…', chapters: [], hasDocument: false, wsCount: -1, midCount: -1, shortCount: -1, quoteCount: -1, silenced: false };
 let scrape = { busy: false, taskText: '' };
 let cursorLine = -1;
 let lastScrollChapterLine = -1;
 const previewTimers = {};
+let hintTimer = null;
 
 function post(message) { vsapi.postMessage(message); }
 function run(name) { post({ command: 'run', name }); }
@@ -23,10 +24,14 @@ function savePreferences() { if (vsapi.setState) vsapi.setState(Object.assign({}
 function applyTheme(announce) {
   if (preferences.theme === 'auto') delete document.body.dataset.theme;
   else document.body.dataset.theme = preferences.theme;
-  const label = { auto: '跟随 VS Code', light: '浅色纸墨', dark: '深色纸墨' }[preferences.theme];
+  const label = { auto: '跟随 VS Code', light: '宣纸（浅色）', dark: '夜墨（深色）' }[preferences.theme];
   $('themeButton').title = '主题：' + label + '（点击切换）';
   $('themeButton').setAttribute('aria-label', '面板主题：' + label + '，点击切换');
-  if (announce) $('themeHint').textContent = '主题：' + label;
+  if (announce) {
+    $('themeHint').textContent = '主题：' + label;
+    if (hintTimer) clearTimeout(hintTimer);
+    hintTimer = setTimeout(() => { $('themeHint').textContent = ''; hintTimer = null; }, 1600);
+  }
 }
 
 function showTab(name) {
@@ -60,15 +65,19 @@ function updateDisabled() {
 function renderIssues() {
   const available = data.hasDocument && data.wsCount >= 0;
   const counts = { Ws: Math.max(0, data.wsCount) + Math.max(0, data.midCount || 0), Short: data.shortCount, Quote: data.quoteCount };
+  const names = { Ws: '空白', Short: '标点短行', Quote: '引号配对' };
   Object.keys(counts).forEach((key) => {
     const count = counts[key] || 0;
     const row = $('row' + key);
-    const state = !available ? '' : data.silenced ? '' : count > 0 ? 'warn' : 'ok';
-    row.className = 'issue-row' + (state ? ' ' + state : '');
-    const mark = row.querySelector('.issue-mark');
-    if (mark) mark.textContent = state === 'warn' ? '!' : state === 'ok' ? '✓' : '—';
-    $('count' + key).textContent = !available ? '—' : data.silenced ? '已暂停' : count > 0 ? count + ' 处' : '已通过';
+    const state = !available ? '' : data.silenced ? 'paused' : count > 0 ? 'warn' : 'ok';
+    row.className = 'check card' + (state ? ' ' + state : '');
+    const summary = !available ? '未检查' : data.silenced ? '已暂停' : count > 0 ? count + ' 处' : '已通过';
+    row.title = names[key] + '：' + summary;
+    $('count' + key).textContent = !available || data.silenced ? '—' : String(count);
   });
+  const paused = data.hasDocument && data.silenced;
+  $('silenceNote').hidden = !paused;
+  $('checkBtn').className = 'ghost check-btn' + (paused ? ' emph' : '');
 }
 
 function currentChapterIndex() {
@@ -147,6 +156,18 @@ function renderList() {
   else box.appendChild(emptyRow('没有匹配的章节'));
 }
 
+// 只滚动目录列表本身，避免 scrollIntoView 连带滚动整个面板
+function scrollRowIntoList(row, center) {
+  const box = $('chapters');
+  if (!row || !box || typeof row.offsetTop !== 'number') return;
+  const pad = 36; // 给吸顶的卷标题留出位置
+  const top = row.offsetTop;
+  const bottom = top + row.offsetHeight;
+  if (center) box.scrollTop = Math.max(0, top - (box.clientHeight - row.offsetHeight) / 2);
+  else if (top - pad < box.scrollTop) box.scrollTop = Math.max(0, top - pad);
+  else if (bottom > box.scrollTop + box.clientHeight) box.scrollTop = bottom - box.clientHeight + 4;
+}
+
 function highlightCurrent(autoScroll) {
   const index = currentChapterIndex();
   const line = index >= 0 ? data.chapters[index].line : -1;
@@ -159,7 +180,7 @@ function highlightCurrent(autoScroll) {
     const row = document.querySelector('.ch[data-line="' + line + '"]');
     if (row) {
       lastScrollChapterLine = line;
-      row.scrollIntoView({ block: 'nearest' });
+      scrollRowIntoList(row, false);
     }
   }
 }
@@ -167,6 +188,7 @@ function highlightCurrent(autoScroll) {
 function render() {
   $('fileName').textContent = data.fileName;
   $('fileStatus').textContent = !data.hasDocument ? '' : data.dirty ? '未保存' : '已保存';
+  $('fileStatus').className = 'file-status' + (data.hasDocument && data.dirty ? ' dirty' : '');
   renderIssues();
   renderList();
   updateDisabled();
@@ -186,9 +208,10 @@ function renderScrape(state) {
     const row = document.createElement('div');
     row.className = 'srow';
     const book = document.createElement('span');
-    book.className = 'book';
+    book.className = 'spine';
     book.setAttribute('aria-hidden', 'true');
-    book.textContent = '文';
+    const firstChar = Array.from(String(entry.title || '').replace(/^[\s\p{P}\p{S}]+/u, ''))[0];
+    book.textContent = firstChar || '文';
     const description = document.createElement('div');
     const title = document.createElement('div');
     title.className = 'st';
@@ -205,7 +228,9 @@ function renderScrape(state) {
 }
 
 function renderTask() {
-  $('taskDot').className = 'dot' + (scrape.busy ? ' busy' : '');
+  const failed = !scrape.busy && /失败|错误|失效|出错/.test(scrape.taskText);
+  $('taskDot').className = 'dot' + (scrape.busy ? ' busy' : failed ? ' error' : '');
+  $('taskText').title = scrape.taskText || '';
   $('taskText').textContent = scrape.taskText || (scrape.busy ? '任务进行中…' : '就绪');
   $('cancelBtn').hidden = !scrape.busy;
   const progress = $('taskProgress');
@@ -247,8 +272,19 @@ bindPreview('pixivInput', 'pixiv');
 bindPreview('cool18Input', 'cool18');
 $('search').value = preferences.search;
 $('search').addEventListener('input', () => { preferences.search = $('search').value; savePreferences(); renderList(); });
-$('moreTools').open = preferences.moreOpen;
-$('moreTools').addEventListener('toggle', () => { preferences.moreOpen = $('moreTools').open; savePreferences(); });
+$('search').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    const row = $('chapters').querySelector('.ch:not(.vol)') || $('chapters').querySelector('.ch');
+    if (row) { event.preventDefault(); post({ command: 'chapter', line: Number(row.dataset.line) }); }
+  } else if (event.key === 'Escape' && $('search').value) {
+    $('search').value = '';
+    preferences.search = '';
+    savePreferences();
+    renderList();
+  }
+});
+$('toolsPanel').open = preferences.toolsOpen;
+$('toolsPanel').addEventListener('toggle', () => { preferences.toolsOpen = $('toolsPanel').open; savePreferences(); });
 
 document.body.addEventListener('click', (event) => {
   const el = event.target.closest('button');
@@ -268,7 +304,7 @@ document.body.addEventListener('click', (event) => {
     savePreferences();
   } else if (el.dataset.action === 'locate') {
     const row = document.querySelector('.ch.current');
-    if (row) row.scrollIntoView({ block: 'center' });
+    if (row) scrollRowIntoList(row, true);
   }
 });
 
