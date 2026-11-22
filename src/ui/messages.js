@@ -14,7 +14,7 @@ module.exports = {
     'nextQuote', 'prevQuote',
     'nextChapter', 'prevChapter',
     'cool18OpenOutput', 'cool18Search', 'showScrapeLog',
-    'pixivSetCookie', 'pixivGrabUser', 'pixivUpdate', 'pixivOpenOutput', 'scrapeCancel',
+    'pixivSetCookie', 'pixivGrabUser', 'pixivUpdate', 'pixivOpenOutput',
     'showHistory',
     't2sFile',
     'batchProcess',
@@ -25,7 +25,7 @@ module.exports = {
     'refresh', 'chapter', 'scrapePreview',
     'cool18Grab', 'cool18GrabFile',
     'pixivGrab', 'pixivGrabFile', 'pixivCancel',
-    'setCookie', 'renameFile', 'openSettings',
+    'renameFile', 'openSettings',
   ],
 
   // 主机 → 面板 的推送类型

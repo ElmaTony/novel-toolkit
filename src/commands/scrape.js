@@ -120,6 +120,16 @@ function registerScrapeCommands({ reg, panel, scrape }) {
       }
     );
     if (!results || !results.length) {
+      if (scrape.lastSearchStatus === 'busy') return;
+      if (scrape.lastSearchStatus === 'aborted') {
+        return vscode.window.showInformationMessage('cool18 搜索已取消');
+      }
+      if (scrape.lastSearchStatus === 'error') {
+        const pick = await vscode.window.showErrorMessage(
+          'cool18 搜索失败：' + (scrape.lastSearchError || '未知错误'), '查看日志');
+        if (pick === '查看日志') scrape.showLog();
+        return;
+      }
       return vscode.window.showInformationMessage('没有搜到含「' + kw.trim() + '」的帖子');
     }
     const items = results.map((r) => ({

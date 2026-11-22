@@ -24,7 +24,7 @@ function activate(context) {
   const reg = (name, fn) =>
     context.subscriptions.push(vscode.commands.registerCommand('novelToolkit.' + name, fn));
 
-  registerNavigationCommands({ reg, panel, checker, cfg });
+  registerNavigationCommands({ reg, panel, checker });
   registerOrganizeCommands({ reg, panel, checker, cfg });
   context.subscriptions.push({ dispose: disposeOrganize });
   registerFileCommands({ reg, panel, checker });

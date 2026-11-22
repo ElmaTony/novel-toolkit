@@ -37,9 +37,11 @@ async function main() {
     StatusBarAlignment: { Right: 1 },
   };
   const context = { subscriptions: [], globalState: { get: (_key, fallback) => fallback, update() {} } };
+  const { parseEntries: parseCool18Entries } = require('../src/engine/cool18/parse');
+  const { parseInput: parsePixivInput } = require('../src/engine/pixiv/parseInput');
   const { PanelManager } = load('src/ui/panel.js', {
     vscode,
-    '../service/scrape': {},
+    '../service/scrape': { parseCool18Entries, parsePixivInput },
   });
   const checker = { appliesTo: () => true, counts: () => ({ ws: 1, mid: 2, short: 0, quote: 0, silenced: false }) };
   const panel = new PanelManager(context, checker, {});
@@ -69,6 +71,27 @@ async function main() {
   panel.lastEditor = editor;
   panel.update();
   eq(messages[messages.length - 1].hasDocument, false, '关闭的文稿不再作为操作目标');
+
+  // 运行中再点抓取不破坏 running=true 与取消按钮；空闲校验失败后刷新不抹掉提示
+  const busyScrape = { busy: true, taskText: '3/9 正在抓取', snapshot: () => ({ busy: true, taskText: '3/9 正在抓取' }), pixivCookie: async () => '' };
+  panel.scrape = busyScrape;
+  messages.length = 0;
+  await panel.handle({ command: 'cool18Grab', text: '123456' });
+  eq(messages[messages.length - 1], { type: 'task', running: true, text: '3/9 正在抓取' }, '任务运行中重复触发不隐藏取消状态');
+  const idleScrape = { busy: false, taskText: '', snapshot: () => ({ busy: false, taskText: idleScrape.taskText }), pixivCookie: async () => '' };
+  panel.scrape = idleScrape;
+  await panel.handle({ command: 'cool18Grab', text: '' });
+  eq(idleScrape.taskText.includes('没有识别到 cool18'), true, '空闲校验失败同步写入 taskText，避免 refresh 擦除');
+
+  // 大文件后台章节分析失败后不缓存 rejected Promise
+  let chapterAttempt = 0;
+  panel.analysis = {
+    run: () => ++chapterAttempt === 1 ? Promise.reject(new Error('临时故障')) : Promise.resolve([{ line: 0, title: '第一章', kind: 'chapter' }]),
+    dispose() {},
+  };
+  const bigDoc = { version: 1, lineCount: 9000, lineAt: () => ({ text: '正文' }), isClosed: false };
+  await assert.rejects(panel.chapterEntries(bigDoc), /临时故障/); passed++;
+  eq((await panel.chapterEntries(bigDoc)).length, 1, '章节后台分析失败后清理缓存并可重试成功');
 
   const { ScrapeManager } = load('src/service/scrape.js', { vscode });
   const manager = new ScrapeManager(context);

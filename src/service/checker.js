@@ -156,7 +156,13 @@ class Checker {
 
   silence(doc) {
     this.scanJobs.delete(doc);
-    this.silenced.add(doc.uri.toString());
+    const key = doc.uri.toString();
+    const timer = this.timers.get(key);
+    if (timer) {
+      clearTimeout(timer);
+      this.timers.delete(key);
+    }
+    this.silenced.add(key);
     this.diags.delete(doc.uri);
     this.notify();
   }
@@ -189,8 +195,14 @@ class Checker {
 
   // 文件重命名时迁移检查状态（警告清单 + 静音标记），内容未变则状态不变
   moveState(oldUri, newUri) {
-    const wasSilenced = this.silenced.has(oldUri.toString());
-    this.silenced.delete(oldUri.toString());
+    const oldKey = oldUri.toString();
+    const timer = this.timers.get(oldKey);
+    if (timer) {
+      clearTimeout(timer);
+      this.timers.delete(oldKey);
+    }
+    const wasSilenced = this.silenced.has(oldKey);
+    this.silenced.delete(oldKey);
     const list = this.diags.get(oldUri);
     this.diags.delete(oldUri);
     if (wasSilenced) {

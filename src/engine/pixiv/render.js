@@ -1,6 +1,6 @@
 'use strict';
 
-// Pixiv 小说正文标记还原（规则表见 DESIGN.md §6）
+// Pixiv 小说正文标记还原
 // 目标：纯 txt 可读、章节行能被小说工具箱的章节正则识别、未知标记不静默丢失
 
 function renderContent(raw, opts = {}) {

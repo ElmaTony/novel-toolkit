@@ -31,7 +31,8 @@ class ScrapeManager {
     this.active = null; // { label, controller }
     this.taskText = '';
     this.onTask = null; // (running, text) => void —— 面板任务行
-    this.lastCool18Out = '';
+    this.lastSearchStatus = 'ok';
+    this.lastSearchError = '';
     this.snapshotCache = null;
     this.tokenLinks = new Set();
     context.subscriptions.push({ dispose: () => {
@@ -180,12 +181,11 @@ class ScrapeManager {
           this.task(true, text);
         },
       });
-      this.lastCool18Out = result.outDir;
-        this.recordHistory({
-          kind: 'cool18',
-          label: result.count + ' 帖 · ' + require('path').basename(result.outDir),
-          outDir: result.outDir,
-        });
+      this.recordHistory({
+        kind: 'cool18',
+        label: result.count + ' 帖 · ' + path.basename(result.outDir),
+        outDir: result.outDir,
+      });
     } catch (e) {
       this.log('cool18 抓取失败: ' + e.message);
       result = { error: e.message, aborted: /已取消/.test(e.message) };
@@ -218,20 +218,36 @@ class ScrapeManager {
   async searchCool18(keyword, { token } = {}) {
     // 与抓取共用单任务闸门：并发搜索会和进行中的抓取抢限速配额
     if (this.active) {
+      this.lastSearchStatus = 'busy';
+      this.lastSearchError = '';
       vscode.window.showInformationMessage('已有抓取任务进行中，请等它完成或先取消后再搜索');
       return [];
     }
     const controller = new AbortController();
     const tokenLink = this.bindToken(token, controller);
     this.active = { label: 'cool18-search', controller };
+    this.lastSearchStatus = 'ok';
+    this.lastSearchError = '';
     this.task(true, '正在搜索 cool18…');
     try {
       const result = await this.buildCool18().search(keyword, { signal: controller.signal });
-      this.task(false, controller.signal.aborted ? '搜索已取消' : '搜索完成：' + result.length + ' 个结果');
+      if (controller.signal.aborted) {
+        this.lastSearchStatus = 'aborted';
+        this.task(false, '搜索已取消');
+        return [];
+      }
+      this.task(false, '搜索完成：' + result.length + ' 个结果');
       return result;
     } catch (e) {
       this.log('搜索失败: ' + e.message);
-      this.task(false, controller.signal.aborted ? '搜索已取消' : '搜索失败：' + e.message);
+      if (controller.signal.aborted || /已取消/.test(e.message)) {
+        this.lastSearchStatus = 'aborted';
+        this.task(false, '搜索已取消');
+      } else {
+        this.lastSearchStatus = 'error';
+        this.lastSearchError = e.message || String(e);
+        this.task(false, '搜索失败：' + this.lastSearchError);
+      }
       return [];
     } finally { this.active = null; this.releaseToken(tokenLink); }
   }
@@ -274,8 +290,8 @@ class ScrapeManager {
         if (controller.signal.aborted) break;
         try {
           if (force && (t.type === 'series' || t.type === 'novel')) {
-            const cleared = t.type === 'series' ? core.clearSeries(t.id) : core.clearNovel(t.id);
-            if (cleared) reporter.report('强制重抓：已准备备份替换 ' + t.type + ':' + t.id + ' 的文件');
+            const existed = t.type === 'series' ? core.clearSeries(t.id) : core.clearNovel(t.id);
+            reporter.report('强制重抓：已准备备份替换 ' + t.type + ':' + t.id + (existed ? ' 的文件' : ' 的目标文件'));
           }
           const r = t.type === 'series'
             ? await core.downloadSeries(t.id, ctx)
@@ -292,21 +308,23 @@ class ScrapeManager {
             if (pickAns === '抓全系列') {
               const seriesResult = await core.downloadSeries(r.seriesNav.seriesId, ctx);
               saved.push(seriesResult);
-              failures.push(...seriesResult.failures.map(f => f.id + ': ' + f.message));
+              if (Array.isArray(seriesResult.failures)) failures.push(...seriesResult.failures.map(f => typeof f === 'string' ? f : f.id + ': ' + f.message));
             }
           }
         } catch (e) {
           if (e instanceof PixivError && e.kind === 'auth') { authError = true; break; }
+          if (controller.signal.aborted) break;
           failures.push(t.type + ':' + t.id + ' ' + e.message);
           this.log('失败 ' + t.type + ':' + t.id + ' (' + (e.kind || 'error') + '): ' + e.message);
         }
       }
-      this.log('处理结束：新增 ' + this.savedCount(saved) + '，失败 ' + failures.length +
+      const totalSaved = this.savedCount(saved);
+      this.log('处理结束：新增 ' + totalSaved + '，失败 ' + failures.length +
         (controller.signal.aborted ? '，已取消' : ''));
-      if (this.savedCount(saved) > 0) {
+      if (totalSaved > 0) {
         this.recordHistory({
           kind: 'pixiv',
-          label: '新增 ' + saved.filter((r) => r && !r.skipped).length + ' 项',
+          label: '新增 ' + totalSaved + ' 篇/章',
           outDir: this.pixivOutputRoot(),
         });
       }
@@ -419,7 +437,7 @@ class ScrapeManager {
       cool18Out: this.cool18OutputRoot(),
       cool18Proxy: trim(pick(CFG().get('cool18Proxy'), OLD_COOL18().get('proxy', 'http://127.0.0.1:7897'))) || '直连',
       pixivOut: this.pixivOutputRoot(),
-      pixivProxy: trim(pick(CFG().get('pixivProxy'), OLD_PIXIV().get('proxy', ''))) || '直连',
+      pixivProxy: trim(pick(CFG().get('pixivProxy'), OLD_PIXIV().get('proxy', 'http://127.0.0.1:7897'))) || '直连',
       series,
       novelCount,
     };

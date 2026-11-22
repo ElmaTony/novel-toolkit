@@ -17,8 +17,6 @@
 //
 // 安全规则: 变体组合新增的映射, 键若属于 GB2312 简体规范字集则跳过
 //   （日文新字体与简体大量同形, 如 欠/翻/研/沪/芸/叙 —— 它们是合法简体字, 不能被转走）
-//
-// 用法: node scripts/gen-zh-data.js [opencc数据目录]   (默认 tmp-opencc/)
 
 const fs = require('fs');
 const path = require('path');

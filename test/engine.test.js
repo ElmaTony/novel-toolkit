@@ -1,13 +1,12 @@
-const { makeTemp } = require('./temp');
 'use strict';
 
-// 纯离线测试: node test-features.js
-// 不打网络、不碰 F 盘 —— 落盘全部走 os.tmpdir() 临时目录
+// 纯离线测试: node test/engine.test.js
+// 不打网络、不碰用户目录 —— 落盘全部走 os.tmpdir() 临时目录
 // 覆盖: 整理引擎(transforms/chapters) / cool18 解析(fixtures) / Pixiv 全流程(FakeFetcher)
 
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
+const { makeTemp } = require('./temp');
 
 const t = require('../src/engine/transforms');
 const chaptersMod = require('../src/engine/chapters');

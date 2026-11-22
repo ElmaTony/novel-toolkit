@@ -258,6 +258,7 @@ document.body.addEventListener('click', (event) => {
   if (el.dataset.line !== undefined) { post({ command: 'chapter', line: Number(el.dataset.line) }); return; }
   if (el.dataset.run) { run(el.dataset.run); return; }
   if (el.dataset.host === 'pixivGrabFile') { pixivGrabFile(); return; }
+  if (el.dataset.host === 'cool18GrabFile') { start({ command: 'cool18GrabFile' }); return; }
   if (el.dataset.host) { post({ command: el.dataset.host }); return; }
   if (el.dataset.cool18Deep !== undefined) { start({ command: 'cool18Grab', deep: el.dataset.cool18Deep === 'true', text: $('cool18Input').value }); return; }
   if (el.dataset.pixivGrab !== undefined) { start({ command: 'pixivGrab', text: $('pixivInput').value, force: forceGrabOn() }); return; }

@@ -89,6 +89,15 @@ class PanelManager {
     }
   }
 
+  postNotice(text) {
+    if (this.scrape.busy) {
+      this.postTask(true, this.scrape.taskText || text || '已有抓取任务进行中，请等它完成或先取消');
+      return;
+    }
+    this.scrape.taskText = text || '';
+    this.postTask(false, text);
+  }
+
   postScrapeState() {
     if (!this.panel) {
       return;
@@ -157,18 +166,18 @@ class PanelManager {
     if (msg.command === 'cool18Grab') {
       const entries = parseCool18Entries(String(msg.text || ''));
       if (this.scrape.busy) {
-        this.postTask(false, '已有抓取任务进行中，请等它完成或先取消');
+        this.postNotice('已有抓取任务进行中，请等它完成或先取消');
         return;
       }
       if (!entries.length) {
-        this.postTask(false, '没有识别到 cool18 帖子链接或 ID（每行一个）');
+        this.postNotice('没有识别到 cool18 帖子链接或 ID（每行一个）');
         return;
       }
       await this.scrape.cool18(entries, {
         deep: !!msg.deep || entries.length === 1,
         reporter: {
           report: (t) => this.postTask(true, t),
-          finish: (_r, m) => this.postTask(false, m || ''),
+          finish: (_r, m) => this.postNotice(m || ''),
         },
       });
       this.postScrapeState();
@@ -177,24 +186,24 @@ class PanelManager {
     if (msg.command === 'cool18GrabFile') {
       const ed = this.editor();
       if (!ed) {
-        this.postTask(false, '先打开一个含 cool18 链接的文件再点（每行一个链接或帖子 ID）');
+        this.postNotice('先打开一个含 cool18 链接的文件再点（每行一个链接或帖子 ID）');
         return;
       }
       const text = !ed.selection.isEmpty ? ed.document.getText(ed.selection) : ed.document.getText();
       const entries = parseCool18Entries(text);
       if (this.scrape.busy) {
-        this.postTask(false, '已有抓取任务进行中，请等它完成或先取消');
+        this.postNotice('已有抓取任务进行中，请等它完成或先取消');
         return;
       }
       if (!entries.length) {
-        this.postTask(false, '当前文件里没有识别到 cool18 链接或帖子 ID');
+        this.postNotice('当前文件里没有识别到 cool18 链接或帖子 ID');
         return;
       }
       await this.scrape.cool18(entries, {
         deep: false,
         reporter: {
           report: (t) => this.postTask(true, t),
-          finish: (_r, m) => this.postTask(false, m || ''),
+          finish: (_r, m) => this.postNotice(m || ''),
         },
       });
       this.postScrapeState();
@@ -203,16 +212,16 @@ class PanelManager {
     if (msg.command === 'pixivGrab') {
       const targets = parsePixivInput(String(msg.text || ''));
       if (this.scrape.busy) {
-        this.postTask(false, '已有抓取任务进行中，请等它完成或先取消');
+        this.postNotice('已有抓取任务进行中，请等它完成或先取消');
         return;
       }
       const reporter = {
         report: (t) => this.postTask(true, t),
-        finish: (_r, m) => this.postTask(false, m || ''),
+        finish: (_r, m) => this.postNotice(m || ''),
       };
       const r = await this.scrape.executePixiv(targets, reporter, undefined, { force: !!msg.force });
       if (r && r.authError) {
-        this.postTask(false, 'Cookie 缺失或已失效 —— 点「Cookie…」设置后重试');
+        this.postNotice('Cookie 缺失或已失效 —— 点「Cookie…」设置后重试');
         vscode.commands.executeCommand('novelToolkit.pixivSetCookie');
       }
       this.postScrapeState();
@@ -221,22 +230,22 @@ class PanelManager {
     if (msg.command === 'pixivGrabFile') {
       const ed = this.editor();
       if (!ed) {
-        this.postTask(false, '先打开一个含 Pixiv 链接的 txt 文件再点');
+        this.postNotice('先打开一个含 Pixiv 链接的 txt 文件再点');
         return;
       }
       const text = !ed.selection.isEmpty ? ed.document.getText(ed.selection) : ed.document.getText();
       const targets = parsePixivInput(text);
       if (this.scrape.busy) {
-        this.postTask(false, '已有抓取任务进行中，请等它完成或先取消');
+        this.postNotice('已有抓取任务进行中，请等它完成或先取消');
         return;
       }
       const reporter = {
         report: (t) => this.postTask(true, t),
-        finish: (_r, m) => this.postTask(false, m || ''),
+        finish: (_r, m) => this.postNotice(m || ''),
       };
       const r = await this.scrape.executePixiv(targets, reporter, undefined, { force: !!msg.force });
       if (r && r.authError) {
-        this.postTask(false, 'Cookie 缺失或已失效 —— 点「Cookie…」设置后重试');
+        this.postNotice('Cookie 缺失或已失效 —— 点「Cookie…」设置后重试');
         vscode.commands.executeCommand('novelToolkit.pixivSetCookie');
       }
       this.postScrapeState();
@@ -244,12 +253,8 @@ class PanelManager {
     }
     if (msg.command === 'pixivCancel') {
       if (!this.scrape.cancel()) {
-        this.postTask(false, '当前没有正在运行的抓取');
+        this.postNotice('当前没有正在运行的抓取');
       }
-      return;
-    }
-    if (msg.command === 'setCookie') {
-      vscode.commands.executeCommand('novelToolkit.pixivSetCookie');
       return;
     }
     if (msg.command === 'renameFile') {
@@ -281,7 +286,13 @@ class PanelManager {
     if (version !== undefined && cached && cached.version === version && cached.pattern === pattern) return cached.entries;
     const lines = [];
     for (let i = 0; i < doc.lineCount; i++) lines.push(doc.lineAt(i).text);
-    const entries = isLargeDocument(doc) ? this.analysis.run('chapters', { text: lines.join('\n'), pattern }) : chapters.chapterEntries(lines, pattern);
+    const entries = isLargeDocument(doc)
+      ? this.analysis.run('chapters', { text: lines.join('\n'), pattern }).catch((error) => {
+          const cur = this.chapterCache.get(doc);
+          if (cur && cur.entries === entries) this.chapterCache.delete(doc);
+          throw error;
+        })
+      : chapters.chapterEntries(lines, pattern);
     if (version !== undefined) this.chapterCache.set(doc, { version, pattern, entries });
     return entries;
   }

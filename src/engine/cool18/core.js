@@ -10,16 +10,14 @@ const fs = require('fs');
 const path = require('path');
 const { BBS4, extractThread, chapterKey, sanitizeName, parseSearchResults } = require('./parse');
 const { fetchPage } = require('./fetcher');
+const { sleep } = require('../async');
 
-// 可中断的 sleep: 中断返回 false
-async function sleepSlice(ms, signal) {
-  for (let t = 0; t < ms; t += 200) {
-    if (signal && signal.aborted) {
-      return false;
-    }
-    await new Promise((r) => setTimeout(r, Math.min(200, ms - t)));
-  }
-  return true;
+// 可中断的等待: 中断返回 false
+async function waitNext(ms, signal) {
+  if (signal && signal.aborted) return false;
+  if (ms <= 0) return true;
+  try { await sleep(ms, signal); return true; }
+  catch (e) { return false; }
 }
 
 function threadHead(t, url) {
@@ -122,7 +120,6 @@ class Cool18Core {
     const failed = [];
     if (deep) {
       const seen = new Set();
-      const seenChap = new Set(); // 已覆盖的 卷:章（仅整数编号帖参与）
       let visitedPages = 0; // 包含重复与失败页，避免去重绕过访问上限
       const queue = entries.slice(0, 1).map((u) => ({ url: u, via: '', base: null, frac: 0, vol: 0 }));
       while (queue.length && visitedPages < this.maxPages) {
@@ -179,10 +176,8 @@ class Cool18Core {
         // 每帖只认领起始章（防止索引帖(1-70完)把后续单章帖当成重复吞掉）; 同章同部序保留更长版本
         // （同章的 上/中/下 分帖部序不同, 是不同内容, 不互斥）
         let cover = null;
-        let single = false;
         if (numbered) {
           cover = { vol, a: chapStart, b: chapStart, part };
-          single = true;
           const prev = items.find((it) => it.cover && it.cover.vol === vol && it.cover.a === chapStart && (it.cover.part || 0) === part);
           if (prev) {
             if (t.body.length > prev.t.body.length) {
@@ -196,7 +191,7 @@ class Cool18Core {
               if (!seen.has(String(link.tid))) queue.push({ url: BBS4 + link.tid, via: link.text, base: chapEnd, frac: (index + 1) / (t.links.length + 1), vol });
             });
             onProgress('[' + items.length + '] ' + t.title + '（重复/替换）');
-            if (queue.length && !(await sleepSlice(this._nextDelay(), signal))) break;
+            if (queue.length && !(await waitNext(this._nextDelay(), signal))) break;
             continue;
           }
         }
@@ -207,7 +202,7 @@ class Cool18Core {
         }
         items.push({
           key: [vol, sortChap, part, tm ? Number(tm[1]) : 0, chapEnd],
-          cover, single, t, url,
+          cover, t, url,
         });
         onProgress('[' + items.length + '] ' + t.title + '（正文 ' + t.body.length + ' 字，帖内链接 ' + t.links.length + ' 条）');
         this.log('[' + items.length + '] ' + t.title + '  (正文 ' + t.body.length + ' 字, 帖内链接 ' + t.links.length + ' 条)');
@@ -226,7 +221,7 @@ class Cool18Core {
           }
         }
         if (queue.length && !(signal && signal.aborted)) {
-          if (!(await sleepSlice(this._nextDelay(), signal))) {
+          if (!(await waitNext(this._nextDelay(), signal))) {
             this.log('[停止] 用户中断');
             break;
           }
@@ -264,7 +259,7 @@ class Cool18Core {
         onProgress('[' + (i + 1) + '/' + total + '] ' + t.title + '（正文 ' + t.body.length + ' 字）');
         this.log('[' + (i + 1) + '/' + total + '] ' + t.title + '  (正文 ' + t.body.length + ' 字)');
         if (i < total - 1 && !(signal && signal.aborted)) {
-          if (!(await sleepSlice(this._nextDelay(), signal))) {
+          if (!(await waitNext(this._nextDelay(), signal))) {
             this.log('[停止] 用户中断');
             break;
           }

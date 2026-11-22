@@ -10,7 +10,6 @@ const extSrc = [fs.readFileSync('extension.js', 'utf8')]
   .concat(commandFiles.map((f) => fs.readFileSync(f, 'utf8')))
   .join('\n');
 const panelSrc = fs.readFileSync('src/ui/panel.js', 'utf8');
-const scriptSrc = fs.readFileSync('src/ui/panel-webview.js', 'utf8');
 const msgSrc = fs.readFileSync('src/ui/messages.js', 'utf8');
 const engineSrc = ['src/engine/transforms.js', 'src/engine/chapters.js', 'src/engine/cool18/parse.js', 'src/engine/cool18/core.js']
   .map((f) => fs.readFileSync(f, 'utf8')).join('\n');

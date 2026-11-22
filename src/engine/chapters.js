@@ -89,8 +89,8 @@ function chapterLines(lines, pattern) {
   return chapterEntries(lines, pattern).map((e) => e.line);
 }
 
-// 卷-章两级结构: 卷行（第一卷/卷二）标记 kind='volume', 章行 kind='chapter'
-const VOLUME_RE = /^\s*(?:第[〇零一二三四五六七八九十百千万两0-9０-９]{1,9}\s*卷(?![章节话回集部])|卷[〇零一二三四五六七八九十百千万两0-9０-９]{1,9})/;
+// 卷-章两级结构: 卷行（第一卷/卷二/【第一卷】/第 1 卷）标记 kind='volume', 章行 kind='chapter'
+const VOLUME_RE = /^\s*(?:[\[【（(]\s*)?(?:第\s*[〇零一二三四五六七八九十百千万两0-9０-９]{1,9}\s*卷(?![章节话回集部])|卷[〇零一二三四五六七八九十百千万两0-9０-９]{1,9})/;
 
 function chapterEntries(lines, pattern) {
   const re = buildChapterRegex(pattern);
@@ -125,12 +125,12 @@ const FW_DIGITS = { '０': 0, '１': 1, '２': 2, '３': 3, '４': 4, '５': 5, 
 // 万/亿组缺千位时跨组补零（10001→一万零一）；10~19 开头不写"一"（10→十、12→十二）。
 function numToCn(num) {
   const n = Number(num);
-  if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) { return ''; }
+  if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n) || n >= 1e12) { return ''; }
   if (n === 0) { return '零'; }
   const groups = [];
   let v = n;
   while (v > 0) { groups.push(v % 10000); v = Math.floor(v / 10000); }
-  const parts = []; // 从高到低 [{ seg, out }]
+  const parts = []; // 从高到低 [{ g, seg, out }]
   for (let g = groups.length - 1; g >= 0; g--) {
     const seg = groups[g];
     if (seg === 0) { continue; } // 整组为零: 不输出, 跨组零在拼接时按需补
@@ -144,20 +144,20 @@ function numToCn(num) {
       }
     }
     segOut = segOut.replace(/零+$/, '');
-    parts.push({ seg, out: segOut + CN_GROUPS[g] });
+    parts.push({ g, seg, out: segOut + CN_GROUPS[g] });
   }
   let res = '';
   for (let i = 0; i < parts.length; i++) {
-    if (i > 0 && parts[i].seg < 1000) { res += '零'; } // 高组存在但本组无千位 → 跨组零
+    if (i > 0 && (parts[i - 1].g - parts[i].g > 1 || parts[i].seg < 1000)) { res += '零'; } // 跨空组或本组无千位 → 补零
     res += parts[i].out;
   }
   if (res.startsWith('一十')) { res = res.slice(1); }
   return res;
 }
 
-// 第N+单位（第123章 / 第４５卷…）。只取行内第一处 = 章节标记本身；
+// 第N+单位（第123章 / 第 12 章 / 第４５卷…）。只取行内第一处 = 章节标记本身；
 // 且 unifyChapterNumbers 只处理已通过章节正则识别的行，正文里的"第3次"碰不到
-const CH_ARABIC_RE = /(第)([0-9０-９]+)(?=\s*[章节卷回部集话])/;
+const CH_ARABIC_RE = /(第\s*)([0-9０-９]+)(?=\s*[章节卷回部集话])/;
 // 行首"卷N"样式（卷123）
 const VOL_ARABIC_RE = /^(\s*卷)([0-9０-９]+)/;
 

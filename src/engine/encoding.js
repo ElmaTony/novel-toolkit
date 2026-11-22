@@ -135,7 +135,7 @@ function decodeToUtf8(buf) {
     if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1); // 剥 BOM
     return { encoding: enc, text };
   }
-  let decoder = safeDecoder(enc);
+  let decoder = safeDecoder(enc === 'utf8bom' ? 'utf-8' : enc);
   if (!decoder) {
     decoder = new TextDecoder('utf-8'); // 降级：解出含 U+FFFD 的文本，上层 needsReview/跳过逻辑会兜住
   }

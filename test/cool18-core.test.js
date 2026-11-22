@@ -1,11 +1,9 @@
-const { makeTemp } = require('./temp');
 'use strict';
 
 // cool18 核心流程测试: 注入 fake fetchPage, 离线验证排序/去重/命名/落盘
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
-const assert = require('assert');
+const { makeTemp } = require('./temp');
 const { Cool18Core } = require('../src/engine/cool18/core');
 
 let pass = 0;

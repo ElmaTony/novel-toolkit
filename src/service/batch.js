@@ -97,6 +97,7 @@ class BatchProcessor {
     const sourceEncoding = det.encoding;
     const original = det.text;
     if (original.includes('\uFFFD') || original.includes('\u0000')) return { file, sourceEncoding, changed: false, skipped: true, needsReview: true, merged: 0, paragraphs: 0 };
+    if (original === '') return { file, sourceEncoding, changed: false, merged: 0, paragraphs: 0, needsReview: false };
     const lines = original.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n');
 
     const r = prepared ? prepared.result.merged : transforms.mergeLines(lines, {
@@ -105,8 +106,7 @@ class BatchProcessor {
       keepBlankLines: o.keepBlankLines,
       chapterPattern: o.chapterPattern,
     });
-    const dd = transforms.dedentLines(r.lines);
-    const id = prepared ? prepared.result.indented : transforms.indentLines(dd.lines, {
+    const id = prepared ? prepared.result.indented : transforms.indentLines(transforms.dedentLines(r.lines).lines, {
       indentString: o.indentString,
       skipChapterTitles: o.skipChapterTitles,
       chapterPattern: o.chapterPattern,
@@ -127,7 +127,7 @@ class BatchProcessor {
       changed,
       merged: r.merged,
       paragraphs: r.paragraphs,
-      needsReview: det.text.indexOf('\uFFFD') >= 0,
+      needsReview: false,
     };
   }
 
@@ -148,12 +148,16 @@ class BatchProcessor {
         if (fs.statSync(file).size > 512000) {
           const buf = await fs.promises.readFile(file);
           const det = decodeToUtf8(buf);
-          const workerOptions = {};
-          for (const key of ['indentStartsParagraph', 'smartParagraphs', 'keepBlankLines', 'indentString', 'skipChapterTitles', 'normalizeExisting', 'chapterPattern']) { if (opts[key] !== undefined) workerOptions[key] = opts[key]; }
-          const result = await analysis.run('batch', { text: det.text, options: workerOptions });
-          if (this.cancelled || isCancelled(opts.signal)) { results.cancelled = true; break; }
-          if (!buf.equals(await fs.promises.readFile(file))) throw new Error('处理期间文件已修改，跳过写入');
-          prepared = { buf, det, result };
+          if (det.text.includes('\uFFFD') || det.text.includes('\u0000')) {
+            prepared = { buf, det };
+          } else {
+            const workerOptions = {};
+            for (const key of ['indentStartsParagraph', 'smartParagraphs', 'keepBlankLines', 'indentString', 'skipChapterTitles', 'normalizeExisting', 'chapterPattern']) { if (opts[key] !== undefined) workerOptions[key] = opts[key]; }
+            const result = await analysis.run('batch', { text: det.text, options: workerOptions });
+            if (this.cancelled || isCancelled(opts.signal)) { results.cancelled = true; break; }
+            if (!buf.equals(await fs.promises.readFile(file))) throw new Error('处理期间文件已修改，跳过写入');
+            prepared = { buf, det, result };
+          }
         }
         const r = this.processOne(file, opts, prepared);
         results.files.push(r);

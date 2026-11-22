@@ -12,9 +12,9 @@ if (!isMainThread) {
       if (kind === 'scan') result = require('./transforms').scanLines(lines, payload.options);
       else if (kind === 'chapters') result = require('./chapters').chapterEntries(lines, payload.pattern);
       else if (kind === 'batch') {
-        if (lines[lines.length - 1] === '') lines.pop();
+        const batchLines = payload.text.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n');
         const t = require('./transforms');
-        const merged = t.mergeLines(lines, payload.options);
+        const merged = t.mergeLines(batchLines, payload.options);
         const indented = t.indentLines(t.dedentLines(merged.lines).lines, payload.options);
         result = { merged, indented };
       } else throw new Error('未知分析任务');
@@ -37,7 +37,13 @@ class AnalysisWorker {
       });
       const fail = error => { if (this.worker !== worker) return; for (const request of this.requests.values()) request.reject(error); this.requests.clear(); if (this.worker === worker) this.worker = null; };
       worker.on('error', fail);
-      worker.on('exit', code => { if (this.requests.size) fail(new Error('后台分析退出: ' + code)); });
+      worker.on('exit', code => {
+        if (this.worker === worker) this.worker = null;
+        if (this.requests.size) {
+          for (const request of this.requests.values()) request.reject(new Error('后台分析退出: ' + code));
+          this.requests.clear();
+        }
+      });
     }
     this.worker.ref();
     const id = ++this.nextId;

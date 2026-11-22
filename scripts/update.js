@@ -37,7 +37,7 @@ function main() {
     runCli('npx', ['--yes', '@vscode/vsce', 'package', '--out', file], { cwd: root, stdio: 'inherit' });
     runCli('code', ['--install-extension', file, '--force'], { stdio: 'inherit' });
     const installed = runCli('code', ['--list-extensions', '--show-versions'], { encoding: 'utf8' });
-    if (!installed.toLowerCase().split(/\r?\n/).includes(pkg.publisher + '.' + pkg.name + '@' + pkg.version)) throw new Error('安装版本核对失败');
+    if (!installed.toLowerCase().split(/\r?\n/).includes((pkg.publisher + '.' + pkg.name + '@' + pkg.version).toLowerCase())) throw new Error('安装版本核对失败');
     console.log('[update] 已安装 ' + pkg.version + '；已打开的窗口可执行 Developer: Reload Window');
   } finally {
     const target = path.resolve(temp);

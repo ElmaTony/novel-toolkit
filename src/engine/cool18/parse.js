@@ -88,27 +88,6 @@ function extractThread(page, opts = {}) {
   return { title, author, date, body: bodyToText(bodyHtml, opts), links };
 }
 
-// 哨兵前的块: 首个全角空格缩进行之前视为元信息(逐行保留), 之后视为正文(合并硬换行)
-function splitHead(block) {
-  const lines = block.split('\n');
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].indexOf('\u3000') === 0) {
-      return [lines.slice(0, i).join('\n'), lines.slice(i).join('\n')];
-    }
-  }
-  return [block, ''];
-}
-
-// 合并段内 ~60 字硬换行; 两侧都是 ASCII 词时补空格防止粘连
-function unwrap(para) {
-  let p = String(para).replace(/\r/g, '');
-  while (p.includes('\n')) {
-    p = p.replace(/([A-Za-z0-9,.;:!?])\n([A-Za-z0-9])/, '$1 $2');
-    p = p.replace('\n', '');
-  }
-  return p;
-}
-
 const JOIN_RE_A = /[\w]$/;
 const JOIN_RE_B = /^[\w]/;
 const joinWrap = (a, b) => (JOIN_RE_A.test(a) && JOIN_RE_B.test(b) ? a + ' ' + b : a + b);
@@ -371,12 +350,14 @@ function parseSearchResults(page) {
 
 function sanitizeName(name) {
   let s = String(name || '')
+    .replace(/[\x00-\x1f]/g, '')
     .replace(/[\\/:*?"<>|\s]+/g, '_')
-    .replace(/^_+|_+$/g, '');
-  // 标题来自远端页面不可信：剥开头的点（防 '..' 逃出输出目录）、Windows 保留设备名前缀化
-  s = s.replace(/^\.+/, '');
+    .replace(/^[_ .]+|[_ .]+$/g, '');
+  // 标题来自远端页面不可信：剥离首尾点号与保留设备名，避免目录穿越或 Windows 尾点异常
   if (/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$/i.test(s)) s = '_' + s;
-  return s.slice(0, 80) || 'untitled';
+  s = s.slice(0, 80);
+  if (/[\uD800-\uDBFF]$/.test(s)) s = s.slice(0, -1);
+  return s.replace(/[_ .]+$/g, '') || 'untitled';
 }
 
 // 粘贴文本 → 按顺序去重的帖子 URL 列表。支持: 完整链接 / 纯tid / 行尾带标题
@@ -421,8 +402,6 @@ module.exports = {
   decodePage,
   extractThread,
   bodyToText,
-  splitHead,
-  unwrap,
   stripAdLines,
   chapterKey,
   parseSearchResults,

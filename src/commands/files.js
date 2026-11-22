@@ -36,6 +36,9 @@ function registerFileCommands({ reg, panel, checker }) {
       clean += ext;
     }
     const stem = clean.slice(0, clean.length - ext.length);
+    if (!stem || !stem.trim()) {
+      return vscode.window.showErrorMessage('请输入有效的文件名（不能只包含扩展名）');
+    }
     if (/[\x00-\x1f]/.test(clean) || /[. ]$/.test(clean) ||
         /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$/i.test(stem)) {
       return vscode.window.showErrorMessage('文件名含非法字符/Windows 保留名（CON、NUL 等），或以点/空格结尾');

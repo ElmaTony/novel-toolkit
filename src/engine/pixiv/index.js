@@ -89,19 +89,21 @@ class PixivCore {
 
   // 强制重抓只标记意图；成功拿到正文后备份替换，失败时保留旧文件。
   clearSeries(id) {
-    const entry = this.writer.manifest.series[id];
-    if (!entry) return false;
-    if (entry.dir) this.writer.safePath(entry.dir);
-    for (const file of entry.files || []) if (file.file) this.writer.safePath(file.file);
-    this.forceSeries.add(String(id));
-    return true;
+    const key = String(id);
+    const entry = this.writer.manifest.series[key];
+    if (entry) {
+      if (entry.dir) this.writer.safePath(entry.dir);
+      for (const file of entry.files || []) if (file.file) this.writer.safePath(file.file);
+    }
+    this.forceSeries.add(key);
+    return !!entry;
   }
   clearNovel(id) {
-    const entry = this.writer.manifest.novels[id];
-    if (!entry) return false;
-    if (entry.file) this.writer.safePath(entry.file);
-    this.forceNovels.add(String(id));
-    return true;
+    const key = String(id);
+    const entry = this.writer.manifest.novels[key];
+    if (entry && entry.file) this.writer.safePath(entry.file);
+    this.forceNovels.add(key);
+    return !!entry;
   }
 
   // 系列 → 作者名/系列名/NNN 标题.txt + _合并.txt + 链接注记
@@ -201,6 +203,7 @@ class PixivCore {
         this.writer.saveManifest({ checkpoint: true });
       } catch (e) {
         if (e.kind === 'auth') throw e; // finally 会持久化已完成章节
+        if (ctx.signal && ctx.signal.aborted) { this.log('已取消（已保存完成章节，可再次运行续传）'); break; }
         failures.push({ id: ch.id, title: '', kind: e.kind || 'error', message: e.message });
         this.log(`章节 ${ch.id} 失败(${e.kind}): ${e.message}`);
       }
@@ -230,11 +233,11 @@ class PixivCore {
   }
 
   writeMerged(meta, chapters, dir, entry) {
-    const byId = new Map(entry.files.map((f) => [f.id, f]));
+    const byId = new Map(entry.files.map((f) => [String(f.id), f]));
     const parts = [`《${meta.title}》`, `作者：${meta.userName}　来源：${seriesUrl(meta.id)}`];
     let missing = 0;
     chapters.forEach((ch) => {
-      const rec = byId.get(ch.id);
+      const rec = byId.get(String(ch.id));
       const order = (rec && rec.order) || ch.order;
       const title = (rec && rec.title) || `第${order}话`;
       const file = rec && rec.file ? this.writer.safePath(rec.file) : this.writer.chapterPath(meta.userName, meta.userId, meta.title, order, title, meta.id);
@@ -276,6 +279,7 @@ class PixivCore {
         r.savedChapterIds.forEach((id) => covered.add(id));
       } catch (e) {
         if (e.kind === 'auth') throw e;
+        if (ctx.signal && ctx.signal.aborted) break;
         failures.push(`系列 ${sid}: ${e.message}`);
       }
     }
@@ -287,6 +291,7 @@ class PixivCore {
         novelResults.push(await this.downloadNovel(nid, ctx));
       } catch (e) {
         if (e.kind === 'auth') throw e;
+        if (ctx.signal && ctx.signal.aborted) break;
         failures.push(`单篇 ${nid}: ${e.message}`);
       }
     }
@@ -317,6 +322,7 @@ class PixivCore {
         }
       } catch (e) {
         if (e.kind === 'auth') throw e;
+        if (ctx.signal && ctx.signal.aborted) break;
         failures.push(`检查《${entry.title}》失败: ${e.message}`);
         this.log(failures[failures.length - 1]);
       }

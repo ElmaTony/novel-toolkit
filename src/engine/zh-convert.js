@@ -87,15 +87,20 @@ for (const pair of [...CHARS, ...EXTRA_CHARS]) {
 
 // ── 词组桶: 首字 → [[繁词, 简词], ...], 桶内长词优先 ──
 // 恒等词组（乾坤→乾坤）必须保留: 它们的作用是"挡住"字符层的 乾→干
-const _BUCKETS = new Map();
+// 同键按后者优先去重，保证 EXTRA_PHRASES 可覆盖 OpenCC 默认词组。
+const _PHRASE_MAP = new Map();
 for (const [t, s] of [...PHRASES, ...EXTRA_PHRASES]) {
   if ([...t].length < 2) { continue; }
+  _PHRASE_MAP.set(t, s);
+}
+const _BUCKETS = new Map();
+for (const [t, s] of _PHRASE_MAP) {
   const head = t[0];
   if (!_BUCKETS.has(head)) { _BUCKETS.set(head, []); }
   _BUCKETS.get(head).push([t, s]);
 }
 // 输出词形同样受保护，避免再次运行时破坏专名。
-for (const [source, output] of [...PHRASES, ...EXTRA_PHRASES]) {
+for (const [source, output] of _PHRASE_MAP) {
   if (source === output || output.length < 2) continue;
   const bucket = _BUCKETS.get(output[0]) || [];
   if (!bucket.some(([key]) => key === output)) bucket.push([output, output]);

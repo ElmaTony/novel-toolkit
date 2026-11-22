@@ -1,7 +1,7 @@
 'use strict';
 
 // 端点集中封装：字段只在这里映射一次，pixiv 改版只改本文件
-// 注意：社区 API 文档已失修，以下字段以 2026-10 实测为准（见 fixtures/）
+// 注意：社区 API 文档已失修，以下字段以实测接口结构为准
 
 const path = require('path');
 const { BASE } = require('./fetcher');
@@ -88,7 +88,7 @@ class Api {
       if (onPage) onPage(collected.length, meta.publishedContentCount);
       if (page.length < 30 || pages >= maxPages) break;
       const minOrder = Math.min(...page.map((c) => c.order));
-      if (!minOrder) break;
+      if (!minOrder || (lastOrder && minOrder >= lastOrder)) break;
       lastOrder = minOrder;
       if (meta.publishedContentCount && collected.length >= meta.publishedContentCount) break;
     }
@@ -122,19 +122,25 @@ class Api {
       if (e.kind === 'auth' || e.kind === 'rate') throw e;
       this.log(`novels/all 不可用(${e.message})，降级 profile/all`);
     }
-    const seriesIds = [];
+    let seriesIds = [];
     try {
       const p = await this.f.getJson(`${BASE}/ajax/user/${id}/profile/all`);
       const harvest = (v, out) => {
-        if (!Array.isArray(v)) return;
-        for (const x of v) {
-          const s = String(typeof x === 'object' && x ? (x.id || '') : x || '');
-          if (/^\d+$/.test(s)) out.push(s);
+        if (Array.isArray(v)) {
+          for (const x of v) {
+            const s = String(typeof x === 'object' && x ? (x.id || '') : x || '');
+            if (/^\d+$/.test(s)) out.push(s);
+          }
+        } else if (v && typeof v === 'object') {
+          for (const k of Object.keys(v)) {
+            if (/^\d+$/.test(k)) out.push(k);
+          }
         }
       };
       harvest(p.novelSeries, seriesIds);
       harvest(p.novelIds, novelIds);
       harvest(p.novels, novelIds);
+      seriesIds = Array.from(new Set(seriesIds));
       novelIds = Array.from(new Set(novelIds));
     } catch (e) {
       if (e.kind === 'auth' || e.kind === 'rate') throw e;

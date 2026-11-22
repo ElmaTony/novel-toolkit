@@ -69,6 +69,32 @@ async function main() {
   await commands.pixivGrab();
   eq(calls.pop(), [{ type: 'novel', id: '123456' }], '普通抓取: 裸 ID 仍作为单篇');
 
+  // cool18Search 在 busy / aborted / error / 空结果 四种状态下的提示分支
+  const errors = [];
+  vscode.window.showErrorMessage = async (m) => { errors.push(m); };
+  let searchStatus = 'ok';
+  let searchError = '';
+  scrape.searchCool18 = async () => {
+    scrape.lastSearchStatus = searchStatus;
+    scrape.lastSearchError = searchError;
+    return [];
+  };
+  input = '测试关键词';
+  messages.length = 0;
+  searchStatus = 'busy';
+  await commands.cool18Search();
+  eq(messages.length, 0, '搜索忙碌时不重复误报未搜到');
+  searchStatus = 'aborted';
+  await commands.cool18Search();
+  eq(messages.pop(), 'cool18 搜索已取消', '搜索取消时明确提示已取消');
+  searchStatus = 'error';
+  searchError = '连接超时';
+  await commands.cool18Search();
+  eq(errors.pop(), 'cool18 搜索失败：连接超时', '搜索出错时提示真实错误而非未搜到');
+  searchStatus = 'ok';
+  await commands.cool18Search();
+  eq(messages.pop(), '没有搜到含「测试关键词」的帖子', '正常无结果时提示未搜到');
+
   // 异步批量操作期间，第二个命令不得同时改写同一批文件。
   let finishBatch;
   let starts = 0;

@@ -2,18 +2,20 @@
 
 // 检查与跳转命令：全文检查、空白/短行/引号/章节跳转、章节列表
 const vscode = require('vscode');
-const chapters = require('../engine/chapters');
-const { docLines, jumpToLine, noDoc } = require('../core/editor');
+const { jumpToLine, noDoc } = require('../core/editor');
 
-function registerNavigationCommands({ reg, panel, checker, cfg }) {
+function registerNavigationCommands({ reg, panel, checker }) {
   reg('check', async () => {
     const editor = panel.editor();
     if (!editor) {
       return noDoc();
     }
+    if (!checker.appliesTo(editor.document)) {
+      return vscode.window.showInformationMessage('当前文件类型已排除检查');
+    }
     const r = await checker.fullScan(editor.document);
     if (!r) {
-      return vscode.window.showInformationMessage('当前文件类型已排除检查');
+      return;
     }
     if (r.ws.length === 0 && r.mid.length === 0 && r.short.length === 0 && r.quote.length === 0) {
       return vscode.window.showInformationMessage('已扫描全文：没有空白问题（行首/正文），也没有引号配对问题 ✓');
