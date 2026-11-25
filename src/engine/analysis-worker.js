@@ -1,8 +1,24 @@
 'use strict';
 const { Worker, isMainThread, parentPort } = require('worker_threads');
 const LARGE_TEXT = 300000;
+function documentCharLength(doc) {
+  if (!doc) return 0;
+  if (typeof doc.offsetAt === 'function' && typeof doc.lineAt === 'function') {
+    try {
+      if (doc.lineCount <= 0) return 0;
+      const last = doc.lineCount - 1;
+      return doc.offsetAt({ line: last, character: doc.lineAt(last).text.length });
+    } catch (_) { /* 回退 */ }
+  }
+  if (typeof doc.lineAt === 'function' && typeof doc.getText !== 'function') {
+    let total = 0;
+    for (let i = 0; i < doc.lineCount; i++) total += doc.lineAt(i).text.length + 1;
+    return total;
+  }
+  return typeof doc.getText === 'function' ? doc.getText().length : 0;
+}
 function isLargeDocument(doc) {
-  return doc.lineCount > 8000 || (typeof doc.getText === 'function' && doc.getText().length > LARGE_TEXT);
+  return !!(doc && (doc.lineCount > 8000 || documentCharLength(doc) > LARGE_TEXT));
 }
 if (!isMainThread) {
   parentPort.on('message', ({ id, kind, payload }) => {
@@ -11,7 +27,16 @@ if (!isMainThread) {
       let result;
       if (kind === 'scan') result = require('./transforms').scanLines(lines, payload.options);
       else if (kind === 'chapters') result = require('./chapters').chapterEntries(lines, payload.pattern);
-      else if (kind === 'batch') {
+      else if (kind === 't2s') {
+        const { t2sDetail, createChangeSummary } = require('./zh-convert');
+        const summary = createChangeSummary();
+        const out = lines.map((l, idx) => {
+          const { output, changes } = t2sDetail(l);
+          summary.add(changes, idx + 1);
+          return output;
+        });
+        result = { lines: out, summary: summary.result() };
+      } else if (kind === 'batch') {
         const batchLines = payload.text.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n');
         const t = require('./transforms');
         const merged = t.mergeLines(batchLines, payload.options);

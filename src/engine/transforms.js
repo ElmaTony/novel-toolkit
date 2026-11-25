@@ -8,9 +8,10 @@ const WORDISH_RE = /[\w\u4e00-\u9fff\u3400-\u4dbf]/;
 // 正文空格检测（行首空白之外，v0.16.6）：
 //   汉字之间夹半角空格（"他 说"）→ 几乎必为复制/排版残留
 //   行尾空格/制表符 → 隐藏脏数据
-// 英文单词间空格、中英文之间的空格不报（排版规范允许）
-const MID_SPACE_RE = /[\u4E00-\u9FFF]([ \t]+)(?=[\u4E00-\u9FFF])/g;
+// 英文单词间空格、中英文之间的空格、章节标题的标记分隔空格不报（排版规范允许）
+const MID_SPACE_RE = /[\u3400-\u4DBF\u4E00-\u9FFF]([ \t]+)(?=[\u3400-\u4DBF\u4E00-\u9FFF])/g;
 const TRAIL_SPACE_RE = /[ \t]+$/;
+const CHAPTER_HEAD_PREFIX_RE = /^\s*(?:[\[【（(]\s*)?(?:第\s*[〇零一二三四五六七八九十百千万两廿卅卌0-9０-９]{1,9}\s*[章节卷回部集话]|卷[〇零一二三四五六七八九十百千万两廿卅卌0-9０-９]{1,9}|序章|序言|楔子|引子|尾声|终章|后记|番外|終章|後記|尾聲)/;
 
 const isBlank = (text) => text.trim() === '';
 
@@ -36,12 +37,15 @@ function isShortPunctLine(text, maxChars) {
 function describeLeading(ws) {
   let spaces = 0;
   let tabs = 0;
+  let boms = 0;
   let other = 0;
   for (const ch of ws) {
     if (ch === ' ') {
       spaces++;
     } else if (ch === '\t') {
       tabs++;
+    } else if (ch === '\uFEFF') {
+      boms++;
     } else {
       other++;
     }
@@ -53,36 +57,43 @@ function describeLeading(ws) {
   if (tabs > 0) {
     parts.push('Tab×' + tabs);
   }
+  if (boms > 0) {
+    parts.push('BOM字符×' + boms);
+  }
   if (other > 0) {
     parts.push('其他不可见空白（如全角/不间断空格）×' + other);
   }
   return parts.join('、');
 }
 
-// 引号配对检查: 每种引号在行内的开合数量应相等; 返回问题描述数组
+// 引号配对检查: 按左→右顺序配对（闭前开后也能检出），并豁免英文缩写词内撇号（如 don’t）
 const QUOTE_PAIRS = [
   ['「', '」'],
   ['『', '』'],
   ['“', '”'],
   ['‘', '’'],
 ];
+const EN_APOSTROPHE_RE = /([A-Za-z])’(?=[A-Za-z])/g;
 
 function quoteIssues(line) {
+  const cleaned = String(line || '').replace(EN_APOSTROPHE_RE, '$1\'');
   const problems = [];
   for (const [open, close] of QUOTE_PAIRS) {
-    let opens = 0;
-    let closes = 0;
-    for (const ch of line) {
+    let unmatchedOpen = 0;
+    let unmatchedClose = 0;
+    for (const ch of cleaned) {
       if (ch === open) {
-        opens++;
+        unmatchedOpen++;
       } else if (ch === close) {
-        closes++;
+        if (unmatchedOpen > 0) unmatchedOpen--;
+        else unmatchedClose++;
       }
     }
-    if (opens > closes) {
-      problems.push(open + ' 未闭合 ×' + (opens - closes));
-    } else if (closes > opens) {
-      problems.push(close + ' 缺开引号 ×' + (closes - opens));
+    if (unmatchedClose > 0) {
+      problems.push(close + ' 缺开引号 ×' + unmatchedClose);
+    }
+    if (unmatchedOpen > 0) {
+      problems.push(open + ' 未闭合 ×' + unmatchedOpen);
     }
   }
   return problems;
@@ -91,9 +102,10 @@ function quoteIssues(line) {
 // 贴左检查 + 标点短行检查 + 引号配对检查
 function scanLines(lines, opts) {
   const o = Object.assign(
-    { ignoreBlankLines: true, shortLineCheck: true, shortLineMaxChars: 2, quotePairCheck: true },
+    { ignoreBlankLines: true, shortLineCheck: true, shortLineMaxChars: 2, quotePairCheck: true, chapterPattern: undefined },
     opts
   );
+  const chapterSet = new Set(require('./chapters').chapterLines(lines, o.chapterPattern));
   const ws = [];
   const short = [];
   const quote = [];
@@ -115,9 +127,18 @@ function scanLines(lines, opts) {
       continue;
     }
     if (!blank) {
-      // 正文内空格: 汉字间半角空格 / 行尾空格（行首缩进由下面的 ws 检查负责）
+      // 正文内空格: 汉字间半角空格 / 行尾空格（章节标题行豁免章节标记后的分隔空格）
+      const isChap = chapterSet.has(i);
+      const headMatch = isChap ? text.match(CHAPTER_HEAD_PREFIX_RE) : null;
+      const headEnd = headMatch ? headMatch[0].length : -1;
+      let skippedCustomSep = false;
       for (const ms of text.matchAll(MID_SPACE_RE)) {
-        mid.push({ line: i, col: ms.index + 1, len: ms[1].length, desc: '正文汉字之间有空格' });
+        const spacePos = ms.index + 1;
+        if (isChap) {
+          if (headEnd >= 0 && spacePos <= headEnd && ms[1] === ' ') continue;
+          if (headEnd < 0 && !skippedCustomSep && ms[1] === ' ') { skippedCustomSep = true; continue; }
+        }
+        mid.push({ line: i, col: spacePos, len: ms[1].length, desc: '正文汉字之间有空格' });
       }
       const ts = text.match(TRAIL_SPACE_RE);
       if (ts) {
@@ -325,25 +346,32 @@ function insertBlanksBeforeChapters(lines, chapterIdxs) {
 // 注意: String.split 会把匹配文本吞掉, 必须用 exec 手动切
 function splitInlineBreaks(line) {
   const s = String(line);
-  const re = /[\u3000\u00a0 ]{2,}/g;
-  if (!re.test(s)) {
+  const trimmedRight = s.replace(/[ \u00a0\u3000]+$/, '');
+  if (!trimmedRight) {
     return [s];
+  }
+  const leadMatch = trimmedRight.match(/^[ \t\u00a0\u3000]+/);
+  const lead = leadMatch ? leadMatch[0] : '';
+  const body = trimmedRight.slice(lead.length);
+  const re = /[\u3000\u00a0 ]{2,}/g;
+  if (!re.test(body)) {
+    return [trimmedRight];
   }
   re.lastIndex = 0;
   const out = [];
   let last = 0;
-  let prefix = '';
+  let prefix = lead;
   let m;
-  while ((m = re.exec(s)) !== null) {
+  while ((m = re.exec(body)) !== null) {
     const runStart = m.index;
     if (runStart > last) {
-      out.push(prefix + s.slice(last, runStart).replace(/[ \u00a0\u3000]+$/, ''));
+      out.push(prefix + body.slice(last, runStart).replace(/[ \u00a0\u3000]+$/, ''));
     }
     prefix = /^\u3000+$/.test(m[0]) ? '　　' : '';
     last = runStart + m[0].length;
   }
-  if (last < s.length) {
-    out.push(prefix + s.slice(last));
+  if (last < body.length) {
+    out.push(prefix + body.slice(last));
   }
   return out.length ? out : [s];
 }

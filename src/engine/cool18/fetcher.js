@@ -7,6 +7,7 @@ const https = require('https');
 const http = require('http');
 const { URL } = require('url');
 const { decodePage } = require('./parse');
+const { parseProxy, connectHeaders } = require('../proxy');
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
 
@@ -17,10 +18,18 @@ function headers() {
   return { 'User-Agent': UA, 'Accept': 'text/html,application/xhtml+xml,*/*' };
 }
 
-// 返回原始 Buffer（解码交给 parse.decodePage，便于离线测试）
-function requestBuffer(urlStr, { proxy, timeoutMs, signal }) {
+const REDIRECT_CODES = new Set([301, 302, 303, 307, 308]);
+
+// 返回原始 Buffer（解码交给 parse.decodePage，便于离线测试；自动跟随最多 5 次重定向）
+function requestBuffer(urlStr, { proxy, timeoutMs, signal }, redirectsLeft = 5) {
   return new Promise((resolve, reject) => {
     const u = new URL(urlStr);
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') {
+      return reject(new Error('不支持的协议: ' + u.protocol));
+    }
+    const isHttps = u.protocol === 'https:';
+    const defaultPort = isHttps ? 443 : 80;
+    const targetPort = Number(u.port) || defaultPort;
     const base = {
       hostname: u.hostname,
       path: u.pathname + u.search,
@@ -34,6 +43,18 @@ function requestBuffer(urlStr, { proxy, timeoutMs, signal }) {
       req.on('error', reject);
     };
     const onRes = (res) => {
+      if (REDIRECT_CODES.has(res.statusCode) && res.headers && res.headers.location) {
+        res.resume();
+        if (redirectsLeft <= 0) {
+          reject(new Error('重定向次数过多'));
+          return;
+        }
+        let nextUrl;
+        try { nextUrl = new URL(res.headers.location, urlStr).toString(); }
+        catch (e) { reject(new Error('无效的重定向地址')); return; }
+        requestBuffer(nextUrl, { proxy, timeoutMs, signal }, redirectsLeft - 1).then(resolve, reject);
+        return;
+      }
       if (res.statusCode < 200 || res.statusCode >= 300) {
         res.resume();
         reject(new Error('HTTP ' + res.statusCode));
@@ -54,14 +75,31 @@ function requestBuffer(urlStr, { proxy, timeoutMs, signal }) {
       res.on('error', reject);
     };
 
-    if (proxy) {
-      const p = new URL(proxy);
+    const proxyInfo = parseProxy(proxy);
+    if (proxyInfo) {
+      const targetHostPort = u.hostname + ':' + targetPort;
+      if (!isHttps) {
+        const reqHeaders = Object.assign({}, headers(), { Host: u.host });
+        if (proxyInfo.authHeader) reqHeaders['Proxy-Authorization'] = proxyInfo.authHeader;
+        const req = http.request({
+          host: proxyInfo.host,
+          port: proxyInfo.port,
+          method: 'GET',
+          path: urlStr,
+          headers: reqHeaders,
+          timeout: timeoutMs,
+          signal,
+        }, onRes);
+        bind(req);
+        req.end();
+        return;
+      }
       const tunnel = http.request({
-        host: p.hostname,
-        port: Number(p.port) || 80,
+        host: proxyInfo.host,
+        port: proxyInfo.port,
         method: 'CONNECT',
-        path: u.hostname + ':443',
-        headers: { Host: u.hostname + ':443' },
+        path: targetHostPort,
+        headers: connectHeaders(targetHostPort, proxyInfo),
         timeout: timeoutMs,
         signal,
       });
@@ -82,7 +120,8 @@ function requestBuffer(urlStr, { proxy, timeoutMs, signal }) {
       tunnel.on('error', reject);
       tunnel.end();
     } else {
-      const req = https.request(Object.assign(base, { port: 443 }), onRes);
+      const transport = isHttps ? https : http;
+      const req = transport.request(Object.assign(base, { port: targetPort }), onRes);
       bind(req);
       req.end();
     }

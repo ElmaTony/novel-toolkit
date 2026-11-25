@@ -44,8 +44,11 @@ class Checker {
     this.silenced.delete(doc.uri.toString());
     const c = this.cfg();
     const options = {
-      ignoreBlankLines: c.get('ignoreBlankLines', true), shortLineCheck: c.get('shortLineCheck', true),
-      shortLineMaxChars: c.get('shortLineMaxChars', 2), quotePairCheck: c.get('quotePairCheck', true)
+      ignoreBlankLines: c.get('ignoreBlankLines', true),
+      shortLineCheck: c.get('shortLineCheck', true),
+      shortLineMaxChars: c.get('shortLineMaxChars', 2),
+      quotePairCheck: c.get('quotePairCheck', true),
+      chapterPattern: c.get('chapterPattern'),
     };
     const signature = JSON.stringify(options);
     const cached = this.scanCache.get(doc);
@@ -56,15 +59,20 @@ class Checker {
       return this.publish(doc, lines, r);
     };
     if (cached && version !== undefined && cached.version === version && cached.signature === signature) return publish(cached.lines, cached.result);
-    const lines = [];
-    for (let i = 0; i < doc.lineCount; i++) lines.push(doc.lineAt(i).text);
-    if (!isLargeDocument(doc)) return publish(lines, transforms.scanLines(lines, options));
+    if (!isLargeDocument(doc)) {
+      const lines = [];
+      for (let i = 0; i < doc.lineCount; i++) lines.push(doc.lineAt(i).text);
+      return publish(lines, transforms.scanLines(lines, options));
+    }
+    const text = typeof doc.getText === 'function'
+      ? doc.getText()
+      : Array.from({ length: doc.lineCount }, (_, i) => doc.lineAt(i).text).join('\n');
     const job = {};
     const epoch = this.scanEpoch;
     this.scanJobs.set(doc, job);
-    return this.analysis.run('scan', { text: lines.join('\n'), options }).then(result => {
+    return this.analysis.run('scan', { text, options }).then(result => {
       if (this.scanEpoch !== epoch || this.scanJobs.get(doc) !== job || this.silenced.has(doc.uri.toString())) return;
-      return publish(lines, result);
+      return publish(null, result);
     });
   }
 
@@ -101,8 +109,9 @@ class Checker {
       list.push(d);
     }
     for (const q of r.quote) {
+      const len = lines ? lines[q.line].length : doc.lineAt(q.line).text.length;
       const d = new vscode.Diagnostic(
-        new vscode.Range(q.line, 0, q.line, lines[q.line].length),
+        new vscode.Range(q.line, 0, q.line, len),
         '第 ' + (q.line + 1) + ' 行引号疑似不配对（' + q.problems + '），请检查处理',
         vscode.DiagnosticSeverity.Warning
       );
@@ -223,30 +232,46 @@ class Checker {
 
   refreshStatusBar() {
     const editor = vscode.window.activeTextEditor;
-    if (!editor) {
+    if (!editor || !editor.document || editor.document.isClosed) {
       this.statusBar.hide();
       return;
     }
-    if (this.cfg().get('excludedLanguages', []).includes(editor.document.languageId)) {
+    const scheme = editor.document.uri && editor.document.uri.scheme;
+    if (scheme && scheme !== 'file' && scheme !== 'untitled') {
+      this.statusBar.hide();
+      return;
+    }
+    const c = this.cfg();
+    if (!c.get('enabled', true)) {
+      this.statusBar.text = '贴左:关';
+      this.statusBar.tooltip = '自动检查已关闭（点击手动检查当前文件）';
+      this.statusBar.show();
+      return;
+    }
+    if (c.get('excludedLanguages', []).includes(editor.document.languageId)) {
       this.statusBar.text = '贴左:—';
       this.statusBar.tooltip = '该文件类型已排除检查';
       this.statusBar.show();
       return;
     }
-    const c = this.counts(editor.document.uri);
-    if (c.silenced) {
+    const counts = this.counts(editor.document.uri);
+    if (counts.silenced) {
       this.statusBar.text = '贴左:已静音';
       this.statusBar.tooltip = '已保存/已缩进，检查暂停中；Alt+F8 重新检查';
       this.statusBar.show();
       return;
     }
-    if (c.ws === 0 && c.mid === 0 && c.short === 0) {
+    if (counts.ws === 0 && counts.mid === 0 && counts.short === 0 && counts.quote === 0) {
       this.statusBar.text = '贴左:✓';
-      this.statusBar.tooltip = '当前文件所有行都贴最左侧、无正文空格（点击重新检查）';
+      this.statusBar.tooltip = '当前文件无空白、标点短行与引号配对问题（点击重新检查）';
     } else {
-      this.statusBar.text = '贴左:' + c.ws + (c.mid > 0 ? ' 空格:' + c.mid : '') + (c.short > 0 ? ' 残留:' + c.short : '');
-      this.statusBar.tooltip = '当前文件有 ' + c.ws + ' 处行首空白、' + c.mid + ' 处正文空格' +
-        (c.short > 0 ? '、' + c.short + ' 处疑似标点短行' : '') + '（点击重新检查）';
+      this.statusBar.text = '贴左:' + counts.ws +
+        (counts.mid > 0 ? ' 空格:' + counts.mid : '') +
+        (counts.short > 0 ? ' 残留:' + counts.short : '') +
+        (counts.quote > 0 ? ' 引号:' + counts.quote : '');
+      this.statusBar.tooltip = '当前文件有 ' + counts.ws + ' 处行首空白、' + counts.mid + ' 处正文空格' +
+        (counts.short > 0 ? '、' + counts.short + ' 处疑似标点短行' : '') +
+        (counts.quote > 0 ? '、' + counts.quote + ' 处引号疑似不配对' : '') + '（点击重新检查）';
     }
     this.statusBar.show();
   }

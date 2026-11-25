@@ -228,7 +228,7 @@ function renderScrape(state) {
 }
 
 function renderTask() {
-  const failed = !scrape.busy && /失败|错误|失效|出错/.test(scrape.taskText);
+  const failed = !scrape.busy && /失败|错误|失效|出错|未识别/.test(scrape.taskText);
   $('taskDot').className = 'dot' + (scrape.busy ? ' busy' : failed ? ' error' : '');
   $('taskText').title = scrape.taskText || '';
   $('taskText').textContent = scrape.taskText || (scrape.busy ? '任务进行中…' : '就绪');
@@ -281,6 +281,7 @@ $('search').addEventListener('keydown', (event) => {
     preferences.search = '';
     savePreferences();
     renderList();
+    highlightCurrent(true);
   }
 });
 $('toolsPanel').open = preferences.toolsOpen;

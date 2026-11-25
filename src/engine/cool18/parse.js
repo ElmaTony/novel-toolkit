@@ -59,14 +59,16 @@ function decodePage(buf) {
   return new TextDecoder('utf-8').decode(buf);
 }
 
+const ANCHOR_RE = /<a\b[^>]*?\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a>/gi;
+
 function extractThread(page, opts = {}) {
   let m = page.match(/<h1 class="main-title">([\s\S]*?)<\/h1>/);
   const title = m ? cleanText(m[1]) : '未知标题';
 
   m = page.match(/送交者:\s*<a[^>]*>([^<]+)<\/a>/);
-  const author = m ? m[1].trim() : '';
+  const author = m ? cleanText(m[1]) : '';
   m = page.match(/于\s*(\d{4}-\d{2}-\d{2}[^\n<]*)/);
-  const date = m ? m[1].trim() : '';
+  const date = m ? cleanText(m[1]) : '';
 
   m = page.match(/<pre>([\s\S]*?)<\/pre>/i);
   if (!m) {
@@ -78,10 +80,11 @@ function extractThread(page, opts = {}) {
   const bodyHtml = m[1];
 
   const links = [];
-  for (const am of bodyHtml.matchAll(/<a href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)) {
-    const tm = unescapeEntities(am[1]).match(/tid=(\d+)/);
+  for (const am of bodyHtml.matchAll(ANCHOR_RE)) {
+    const href = unescapeEntities(am[1] || am[2] || am[3] || '');
+    const tm = href.match(/tid=(\d+)/);
     if (tm) {
-      links.push({ tid: Number(tm[1]), text: cleanText(am[2]) });
+      links.push({ tid: Number(tm[1]), text: cleanText(am[4]) });
     }
   }
 
@@ -92,14 +95,12 @@ const JOIN_RE_A = /[\w]$/;
 const JOIN_RE_B = /^[\w]/;
 const joinWrap = (a, b) => (JOIN_RE_A.test(a) && JOIN_RE_B.test(b) ? a + ' ' + b : a + b);
 
-// 把片段内的 WRAP 哨兵（<br>/源换行）按硬换行合并掉
+// 把片段内的 WRAP 哨兵（<br>/源换行）按硬换行线性合并掉（O(N) 且不吞连续英文换行空格）
 function unwrapWrap(s) {
-  let p = String(s).replace(new RegExp(WRAP + '+', 'g'), WRAP);
-  while (p.includes(WRAP)) {
-    p = p.replace(/([A-Za-z0-9,.;:!?])\x01([A-Za-z0-9])/, '$1 $2');
-    p = p.replace(WRAP, '');
-  }
-  return p;
+  return String(s)
+    .replace(/\x01+/g, '\x01')
+    .replace(/([A-Za-z0-9,.;:!?])\x01(?=[A-Za-z0-9])/g, '$1 ')
+    .replace(/\x01/g, '');
 }
 
 // 连续空行折叠为一个
@@ -166,7 +167,7 @@ function bodyToText(bodyHtml, opts = {}) {
   let html = String(bodyHtml)
     .replace(/<B>\s*<font[^>]*>\s*/gi, '')
     .replace(/<\/font[^>]*>\s*<\/B>/gi, '')
-    .replace(/<a href="[^"]*tid=\d+[^"]*"[^>]*>[\s\S]*?<\/a>/gi, '');
+    .replace(ANCHOR_RE, (full, h1, h2, h3) => (/tid=\d+/i.test(unescapeEntities(h1 || h2 || h3 || '')) ? '' : full));
 
   const hasParaTags = /<p(>| )/i.test(html);
 
@@ -243,31 +244,59 @@ function bodyToText(bodyHtml, opts = {}) {
   return opts.cleanAds === false ? cleaned : stripAdLines(cleaned, opts.onRemove);
 }
 
-// 中文数字 → 阿拉伯数字（支持 〇零一二三四五六七八九十百千万两，如 二十三→23、一百零五→105）
+// 中文数字 → 阿拉伯数字（支持 〇零一二三四五六七八九十百千万亿两廿卅卌，兼容“一百一二→112”“一百二→120”）
 function cnNumeral(str) {
   const digits = { 零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+  const specials = { 廿: 20, 卅: 30, 卌: 40 };
   const units = { 十: 10, 百: 100, 千: 1000, 万: 10000, 亿: 100000000 };
   const raw = String(str || '');
+  if (!raw) return 0;
   if (/^[零〇一二两三四五六七八九]+$/.test(raw)) return Number([...raw].map(ch => digits[ch]).join(''));
   let total = 0;
   let section = 0;
   let num = 0;
-  for (const ch of String(str || '')) {
+  let numDigits = 0;
+  let lastUnit = 0;
+  let zeroAfterUnit = false;
+  for (const ch of raw) {
     if (Object.prototype.hasOwnProperty.call(digits, ch)) {
-      num = digits[ch];
+      const d = digits[ch];
+      if (d === 0) {
+        if (numDigits > 0) { num = num * 10; numDigits++; }
+        else zeroAfterUnit = true;
+      } else {
+        num = numDigits > 0 ? num * 10 + d : d;
+        numDigits++;
+      }
+    } else if (Object.prototype.hasOwnProperty.call(specials, ch)) {
+      section += specials[ch];
+      num = 0;
+      numDigits = 0;
+      lastUnit = 10;
+      zeroAfterUnit = false;
     } else if (Object.prototype.hasOwnProperty.call(units, ch)) {
       const u = units[ch];
       if (u >= 10000) {
-        section = (section + num) * u;
-        total += section;
+        if (numDigits === 1 && lastUnit >= 100 && !zeroAfterUnit) {
+          section += num * (lastUnit / 10);
+        } else {
+          section += num;
+        }
+        total += (section || 1) * u;
         section = 0;
       } else {
-        section += (num || 1) * u;
+        section += (numDigits ? num : 1) * u;
       }
       num = 0;
+      numDigits = 0;
+      lastUnit = u;
+      zeroAfterUnit = false;
     } else {
       return 0;
     }
+  }
+  if (numDigits === 1 && lastUnit >= 100 && !zeroAfterUnit) {
+    num = num * (lastUnit / 10);
   }
   return total + section + num;
 }
@@ -275,67 +304,93 @@ function cnNumeral(str) {
 // 部序: 章号后紧邻的 上/中/下（或 前/中/后）分部 —— （5上）（13中）第5章(下) 这类一章分帖连载
 // 部序字符后不能再紧跟汉字/数字, 否则视为正文词（"第5章 中间人"的 中、"第5章前的回忆"的 前 都不匹配）
 const PART_MAP = { 前: 1, 上: 1, 中: 2, 下: 3, 后: 3 };
+const C18_NUM_CHARS = '〇零一二三四五六七八九十百千万两廿卅卌0-9０-９';
+const VOL_TOKEN_RE = new RegExp('第\\s*([' + C18_NUM_CHARS + ']{1,8})\\s*卷(?![章节话回集部])|(?:^|[(\\[【\\s])卷([' + C18_NUM_CHARS + ']{1,8})', 'g');
+const CHAP_RANGE_RE = new RegExp('第\\s*([' + C18_NUM_CHARS + ']{1,8})\\s*[章节回部集话]?\\s*[-~～至到]\\s*第?\\s*([' + C18_NUM_CHARS + ']{1,8})\\s*[章节回部集话]');
+const CHAP_SINGLE_RE = new RegExp('第\\s*([' + C18_NUM_CHARS + ']{1,8})\\s*[章节回部集话]', 'g');
+
 function partIndex(s) {
-  const m = s.match(/(?:\d{1,4}|[〇零一二三四五六七八九十百千万两]{1,8})(?:\s*[章节卷回部集话])?\s*[（(\[【]?\s*([上中下前后])(?![〇零一二三四五六七八九十百千万两0-9０-９\u4e00-\u9fff])/);
+  const m = s.match(/(?:\d{1,4}|[〇零一二三四五六七八九十百千万两廿卅卌]{1,8})(?:\s*[章节卷回部集话])?\s*[（(\[【]?\s*([上中下前后])(?![〇零一二三四五六七八九十百千万两廿卅卌0-9０-９\u4e00-\u9fff])/);
   return m ? (PART_MAP[m[1]] || 0) : 0;
 }
 
+function parseBoundNumber(raw) {
+  const n = /^\d+$/.test(raw) ? Number(raw) : cnNumeral(raw);
+  return n > 0 && n <= 100000 ? n : null;
+}
+
 // 从帖子标题/链接文字解析排序键 [卷号, 章号, 部序, tid, 章号结束]
-// v5: 部序进键（且在 tid 之前）—— 同章 上/中/下 分帖是不同内容, 不参与"同章去重保长版"
-// v4: 卷 > 章两级排序（一卷内章号可独立编排）; 章号优先于卷号提取（"第二卷…第五十二章"→卷2章52）;
-//     日期去毒（"2026-01-08"不是章节号）; 无"第X单位"时退回显式区间/末两数字
+// 支持卷号与括号区间共存（如“第二卷 (1-5)”）、显式章区间（“第10章-第15章”/“第1-5章”）与章前卷后（“第5章（第二卷）”）
 function chapterKey(text, tid) {
   const s = foldFW(text)
     .replace(/20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?/g, ' '); // 日期去毒: 发布日期不是章节号
   const part = partIndex(s);
   let vol = null;
+  const sRest = s.replace(VOL_TOKEN_RE, (full, v1, v2) => {
+    const n = parseBoundNumber(v1 || v2);
+    if (n !== null && vol === null) vol = n;
+    return ' ';
+  });
+
   let chap = null;
-  for (const mm of s.matchAll(/第([〇零一二三四五六七八九十百千万两0-9０-９]{1,8})([章节卷回部集话])/g)) {
-    const n = /^\d+$/.test(mm[1]) ? Number(mm[1]) : cnNumeral(mm[1]);
-    if (!(n > 0) || n > 100000) {
-      // 超大编号不是正常章节号（远端标题可构造"第99999999话"），直接忽略防下游无界循环
-      continue;
-    }
-    if (mm[2] === '卷') {
-      if (vol === null) {
-        vol = n;
-      }
-    } else if (chap === null) {
-      chap = n;
-      break; // 第一个章号即为准（章比卷更细）
+  let chapEnd = null;
+  const rm = sRest.match(CHAP_RANGE_RE);
+  if (rm) {
+    const a = parseBoundNumber(rm[1]);
+    const b = parseBoundNumber(rm[2]);
+    if (a !== null && b !== null) {
+      chap = Math.min(a, b);
+      chapEnd = Math.max(a, b);
     }
   }
-  if (vol === null && chap === null) {
-    // 无"第X单位": 显式区间(84-85) / 末两个数字兜底
-    let m = s.match(/(?:^|[^\d])(\d{1,3})\s*[-~～]\s*(\d{1,3})(?!\d)/);
+  if (chap === null) {
+    for (const mm of sRest.matchAll(CHAP_SINGLE_RE)) {
+      const n = parseBoundNumber(mm[1]);
+      if (n !== null) {
+        chap = n;
+        chapEnd = n;
+        break;
+      }
+    }
+  }
+  if (chap === null) {
+    // 无"第X章": 在剥离卷号后的剩余文本里提取显式区间(1-5 / 84-85) 或数字兜底
+    const m = sRest.match(/(?:^|[^\d])(\d{1,4})\s*[-~～]\s*(\d{1,4})(?!\d)/);
     if (m) {
       const a = Number(m[1]);
       const b = Number(m[2]);
-      return [0, Math.min(a, b), part, tid, Math.max(a, b)];
+      if (a <= 100000 && b <= 100000 && (a > 0 || b > 0)) {
+        chap = Math.min(a, b);
+        chapEnd = Math.max(a, b);
+      }
     }
-    const nums = s.match(/\d+/g) || [];
-    if (nums.length >= 2) {
-      const a = Number(nums[nums.length - 2]);
-      const b = Number(nums[nums.length - 1]);
-      return [0, Math.min(a, b), part, tid, Math.max(a, b)];
+    if (chap === null) {
+      const nums = (sRest.match(/\d+/g) || []).map(Number).filter((n) => n >= 0 && n <= 100000);
+      if (nums.length >= 2) {
+        const a = nums[nums.length - 2];
+        const b = nums[nums.length - 1];
+        chap = Math.min(a, b);
+        chapEnd = Math.max(a, b);
+      } else if (nums.length === 1) {
+        chap = nums[0];
+        chapEnd = nums[0];
+      }
     }
-    if (nums.length === 1) {
-      return [0, Number(nums[0]), part, tid, Number(nums[0])];
-    }
+  }
+  if (vol === null && chap === null) {
     return [1e9, 0, part, tid, 0]; // 解析不出任何编号的排最后
   }
-  return [vol === null ? 0 : vol, chap === null ? 0 : chap, part, tid, chap === null ? 0 : chap];
+  return [vol === null ? 0 : vol, chap === null ? 0 : chap, part, tid, chap === null ? 0 : chapEnd];
 }
 
 // 搜索结果页解析: 抽取含 tid= 的帖子链接（按页面顺序去重）
 function parseSearchResults(page) {
   const links = [];
   const seen = new Set();
-  const re = /<a\s+href="([^"]*tid=\d+[^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
-  let m;
-  while ((m = re.exec(page)) !== null) {
-    const text = cleanText(m[2]);
-    const tidM = unescapeEntities(m[1]).match(/tid=(\d+)/);
+  for (const m of String(page || '').matchAll(ANCHOR_RE)) {
+    const text = cleanText(m[4]);
+    const href = unescapeEntities(m[1] || m[2] || m[3] || '');
+    const tidM = href.match(/tid=(\d+)/);
     if (!tidM || !text) {
       continue;
     }

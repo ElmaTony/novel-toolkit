@@ -5,15 +5,23 @@ const vscode = require('vscode');
 const transforms = require('../engine/transforms');
 const chapters = require('../engine/chapters');
 const { t2sDetail, createChangeSummary } = require('../engine/zh-convert');
-const { docLines, applyLines, noDoc } = require('../core/editor');
+const { docLines, docText, applyLines, noDoc } = require('../core/editor');
+const { AnalysisWorker, isLargeDocument } = require('../engine/analysis-worker');
 
-// 繁简转换清单输出面板（懒创建, 复用）
+// 繁简转换清单输出面板与后台分析线程（懒创建, 复用）
 let _t2sChannel = null;
+let _organizeWorker = null;
 function t2sChannel() {
   if (!_t2sChannel) {
     _t2sChannel = vscode.window.createOutputChannel('小说工具箱 · 繁简转换清单');
   }
   return _t2sChannel;
+}
+function organizeWorker() {
+  if (!_organizeWorker) {
+    _organizeWorker = new AnalysisWorker();
+  }
+  return _organizeWorker;
 }
 
 function registerOrganizeCommands({ reg, panel, checker, cfg }) {
@@ -22,13 +30,14 @@ function registerOrganizeCommands({ reg, panel, checker, cfg }) {
     if (!editor) {
       return noDoc();
     }
-    const r = transforms.mergeLines(docLines(editor.document), {
+    const srcLines = docLines(editor.document);
+    const r = transforms.mergeLines(srcLines, {
       indentStartsParagraph: cfg().get('indentStartsParagraph', true),
       smartParagraphs: cfg().get('smartParagraphs', true),
       keepBlankLines: cfg().get('keepBlankLines', true),
       chapterPattern: cfg().get('chapterPattern')
     });
-    if (r.lines.join('\n') === docLines(editor.document).join('\n')) {
+    if (r.lines.length === srcLines.length && r.lines.every((l, idx) => l === srcLines[idx])) {
       const hint = r.indentParagraphs > 0
         ? '（已识别小说排版：' + r.indentParagraphs + ' 个缩进段落，但没有可合并的段内换行）'
         : '（未识别到小说排版特征：既没有段首缩进，也没有可合并的段内换行）';
@@ -86,8 +95,9 @@ function registerOrganizeCommands({ reg, panel, checker, cfg }) {
     if (!editor) {
       return noDoc();
     }
-    const r = transforms.removeBlankLines(docLines(editor.document));
-    if (r.removed === 0) {
+    const srcLines = docLines(editor.document);
+    const r = transforms.removeBlankLines(srcLines);
+    if (r.removed === 0 || (r.lines.length === 0 && srcLines.length === 1 && srcLines[0] === '')) {
       return vscode.window.showInformationMessage('没有空白行可消除');
     }
     await applyLines(editor, r.lines, '已消除 ' + r.removed + ' 个空白行；不满意可 Ctrl+Z 撤销');
@@ -189,6 +199,9 @@ function registerOrganizeCommands({ reg, panel, checker, cfg }) {
     if (!pick) {
       return;
     }
+    if (editor.document.isClosed) {
+      return noDoc();
+    }
     const r = transforms.fullwidthToHalf(docLines(editor.document), pick.mode);
     const spaceNote = r.spaces ? '；' + r.spaces + ' 个全角空格按惯例未动' : '';
     if (r.count === 0) {
@@ -241,14 +254,29 @@ function registerOrganizeCommands({ reg, panel, checker, cfg }) {
     if (!editor) {
       return noDoc();
     }
-    const lines = docLines(editor.document);
-    const summary = createChangeSummary();
-    const out = lines.map((l, idx) => {
-      const { output, changes } = t2sDetail(l);
-      summary.add(changes, idx + 1);
-      return output;
-    });
-    const r = summary.result();
+    const doc = editor.document;
+    const startVersion = doc.version;
+    let out;
+    let r;
+    if (isLargeDocument(doc)) {
+      const text = typeof docText === 'function' ? docText(doc) : docLines(doc).join('\n');
+      const res = await organizeWorker().run('t2s', { text });
+      if (doc.isClosed) return noDoc();
+      if (startVersion !== undefined && doc.version !== startVersion) {
+        return vscode.window.showWarningMessage('转换期间文档内容已变化，请重新运行繁体转简体');
+      }
+      out = res.lines;
+      r = res.summary;
+    } else {
+      const lines = docLines(doc);
+      const summary = createChangeSummary();
+      out = lines.map((l, idx) => {
+        const { output, changes } = t2sDetail(l);
+        summary.add(changes, idx + 1);
+        return output;
+      });
+      r = summary.result();
+    }
     if (r.totalChanges === 0) {
       return vscode.window.showInformationMessage('文件中没有繁体字');
     }
@@ -284,5 +312,8 @@ function registerOrganizeCommands({ reg, panel, checker, cfg }) {
   });
 }
 
-function disposeOrganize() { if (_t2sChannel) { _t2sChannel.dispose(); _t2sChannel = null; } }
+function disposeOrganize() {
+  if (_t2sChannel) { _t2sChannel.dispose(); _t2sChannel = null; }
+  if (_organizeWorker) { _organizeWorker.dispose(); _organizeWorker = null; }
+}
 module.exports = { registerOrganizeCommands, disposeOrganize };

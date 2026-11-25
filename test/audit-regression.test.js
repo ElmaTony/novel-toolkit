@@ -358,6 +358,184 @@ async function main() {
   await snapMgr.executePixiv([{ type: 'series', id: '1' }, { type: 'novel', id: '2' }], { report() {}, finish() {} });
   eq(snapHistory[0][0].label, '新增 1 篇/章', 'Pixiv 抓取历史按实际新增篇/章数记录');
 
+  // --- v0.19.1 全量代码审查新增回归 ---
+  // 1) 章节标题分隔空格零误报，标题内脏空格与扩展 A 区汉字空格照常检出，BOM 行首提示清晰
+  eq(transforms.scanLines(['第一章 初入江湖', '第1话 初遇', '第一卷 山雨欲来', '序章 觉醒', '第廿五章 破阵']).mid, [], '标准章节标题分隔空格不误报');
+  eq(transforms.scanLines(['第一章 初 入江湖', '第一章 初入江湖  ', '㐀 㐁']).mid.length, 3, '标题内汉字空格、行尾空格与扩展区汉字空格仍检出');
+  eq(transforms.scanLines(['\ufeff第一章']).ws[0].desc.includes('BOM字符×1'), true, '行首 BOM 字符明确标记');
+
+  // 2) 引号顺序配对与英文撇号豁免；mergeLines 保留行首半角/混排缩进
+  eq(transforms.quoteIssues('”你好，“他说。'), ['” 缺开引号 ×1', '“ 未闭合 ×1'], '检出闭前开后的错序引号');
+  eq(transforms.quoteIssues('他说：“I don’t know, it’s John’s.”'), [], '豁免英文缩写撇号不误报');
+  eq(transforms.quoteIssues('他说：Hello.’'), ['’ 缺开引号 ×1'], '非词内孤立右单引号仍检出');
+  eq(transforms.mergeLines(['  第一段。', '  第二段。'], { smartParagraphs: false }).lines, ['  第一段。', '  第二段。'], '合并换行不吞行首半角缩进');
+
+  // 3) 自定义 chapterPattern 不叠加内置松散兜底；括号卷号转汉字；廿/卅/卌与略位中文数字
+  eq(chapters.chapterEntries(['## 第一回', '', '楔子 独立行'], '^##\\s+').map(e => e.line), [0], '自定义正则严格匹配不叠加内置松散兜底');
+  eq(chapters.unifyChapterNumbers(['【卷1】 山雨欲来', '（卷2） 风起']).lines, ['【卷一】 山雨欲来', '（卷二） 风起'], '括号包裹卷号转汉字');
+  const c18Parse = require('../src/engine/cool18/parse');
+  eq([c18Parse.cnNumeral('一百一二'), c18Parse.cnNumeral('一百二'), c18Parse.cnNumeral('一万二'), c18Parse.cnNumeral('廿三'), chapters.chapterNumber('第卅五章')],
+    [112, 120, 12000, 23, 35], '支持略位中文数字与廿/卅章节号');
+
+  // 4) cool18 chapterKey 卷+区间/章区间/章前卷后、unwrapWrap 连续英文、a标签多属性与实体解码、长版替换同步 key
+  eq(c18Parse.chapterKey('【江山】第二卷 (1-5)', 101), [2, 1, 0, 101, 5], '卷号与括号区间共存不丢章号');
+  eq(c18Parse.chapterKey('【江山】第10章-第15章', 103), [0, 10, 0, 103, 15], '显式第X章-第Y章保留结束章号');
+  eq(c18Parse.chapterKey('第5章 初遇（第二卷）', 104), [2, 5, 0, 104, 5], '章前卷后仍提取卷号');
+  eq(c18Parse.bodyToText('　　Hello\nworld\nagain'), '　　Hello world again', '连续英文硬换行保留全部单词空格');
+  const parsedThread = c18Parse.extractThread('<h1 class="main-title">书名</h1>送交者: <a>Tom &amp; Jerry</a><pre>　　正文<a target="_blank" href=\'index.php?tid=654321\'>下一章</a></pre>');
+  eq(parsedThread.author, 'Tom & Jerry', '作者名解码 HTML 实体');
+  eq(parsedThread.links, [{ tid: 654321, text: '下一章' }], '支持非首属性及单引号 href 提取章节链');
+  eq(parsedThread.body, '　　正文', '非首属性 tid 链接文字从正文剥离');
+  const replacePages = {
+    1: page('【书】(1-3)', '短索引', [2, 3]),
+    2: page('【书】第一章', '第一章完整长正文内容超过短索引', []),
+    3: page('【书】第三章', '第三章正文', []),
+  };
+  const replaceCore = new Cool18Core({ outputRoot: folder('c18-replace-key'), delayMs: 0, fetchPage: async u => replacePages[u.match(/tid=(\d+)/)[1]] });
+  const replaceRes = await replaceCore.scrape([pageUrl(1)], { deep: true });
+  eq(replaceRes.missing.some(m => m.includes('2')), true, '索引帖被单章长帖替换后更新覆盖范围，不掩盖缺第2章');
+
+  // 5) 批量整理：已规范非 UTF-8 文件转码为无 BOM UTF-8，无 BOM 文件不注入 BOM，原 BOM 文件保留 BOM
+  const transcodeDir = folder('batch-transcode');
+  const gbkClean = path.join(transcodeDir, 'gbk.txt');
+  // "　　测试。\r\n" 的 GB18030 编码字节
+  const gbkBytes = Buffer.from([0xA1, 0xA1, 0xA1, 0xA1, 0xB2, 0xE2, 0xCA, 0xD4, 0xA1, 0xA3, 0x0D, 0x0A]);
+  fs.writeFileSync(gbkClean, gbkBytes);
+  const gbkOne = new BatchProcessor().processOne(gbkClean, { backup: true });
+  eq(gbkOne.changed, true, '排版已规范的 GBK 文件仍触发转码写入');
+  const gbkAfter = fs.readFileSync(gbkClean);
+  eq(gbkAfter.slice(0, 3).equals(Buffer.from([0xEF, 0xBB, 0xBF])), false, '批量整理默认不注入 UTF-8 BOM');
+  eq(gbkAfter.toString('utf8'), '　　测试。\r\n', '转码后内容准确');
+  eq(new BatchProcessor().processOne(gbkClean, { backup: true }).changed, false, '转码后再次运行幂等');
+  const bomFile = path.join(transcodeDir, 'bom.txt');
+  fs.writeFileSync(bomFile, '\ufeff测试\n', 'utf8');
+  new BatchProcessor().processOne(bomFile, { backup: false });
+  eq(fs.readFileSync(bomFile).slice(0, 3).equals(Buffer.from([0xEF, 0xBB, 0xBF])), true, '原带 UTF-8 BOM 的文件保留 BOM');
+
+  // 6) Pixiv 未完成系列增量补抓、downloadUser 去重与强制重抓、章节改名归档、5xx 不翻转代理、代理简写与鉴权、cool18 重定向
+  const resumeRoot = folder('pixiv-resume');
+  const resumeCore = new PixivCore({ outputRoot: resumeRoot, saveUrlNote: false });
+  const resumeAbort = new AbortController();
+  resumeCore.api.seriesAll = async () => ({ meta: { id: '50', title: '未完系列', userName: '作者', userId: '5', publishedContentCount: 2 }, chapters: [{ id: '501', order: 1 }, { id: '502', order: 2 }] });
+  resumeCore.api.seriesMeta = async () => ({ id: '50', title: '未完系列', userName: '作者', userId: '5', publishedContentCount: 2 });
+  let blockSecond = true;
+  resumeCore.api.novel = async (id) => {
+    if (id === '502' && blockSecond) { resumeAbort.abort(); throw new Error('已取消'); }
+    return { id, title: '第' + (id === '501' ? '一' : '二') + '章', userName: '作者', userId: '5', content: '正文' + id, tags: [] };
+  };
+  await resumeCore.downloadSeries('50', { signal: resumeAbort.signal });
+  blockSecond = false;
+  const resumedUpdate = await resumeCore.checkUpdates({});
+  eq(resumedUpdate.updates.length, 1, '中途取消的未完成系列在 checkUpdates 时自动续传');
+  eq(resumedUpdate.updates[0].saved, 1, '自动续传补齐剩余 1 章');
+
+  const userRoot = folder('pixiv-user');
+  const userCore = new PixivCore({ outputRoot: userRoot, saveUrlNote: false });
+  userCore.api.userBrief = async () => ({ id: '9', name: '作者九' });
+  userCore.api.userWorks = async () => ({ seriesIds: ['60'], novelIds: ['601', '602', '699'] });
+  userCore.api.seriesAll = async () => ({ meta: { id: '60', title: '系列六十', userName: '作者九', userId: '9', publishedContentCount: 2 }, chapters: [{ id: '601', order: 1 }, { id: '602', order: 2 }] });
+  let novelTitle601 = '初版标题';
+  let fail602 = true;
+  const standaloneCalls = [];
+  const origDownloadNovel = userCore.downloadNovel.bind(userCore);
+  userCore.downloadNovel = async (id, ctx) => { standaloneCalls.push(String(id)); return origDownloadNovel(id, ctx); };
+  userCore.api.novel = async (id) => {
+    if (id === '602' && fail602) throw new Error('网络抖动');
+    return { id, title: id === '601' ? novelTitle601 : '作品' + id, userName: '作者九', userId: '9', content: '内容' + id + '-' + novelTitle601, tags: [] };
+  };
+  await userCore.downloadUser('9');
+  eq(standaloneCalls, ['699'], '系列内失败章节不会被当成独立散篇下载');
+  fail602 = false;
+  novelTitle601 = '修订标题';
+  userCore.clearUser('9');
+  const forcedUser = await userCore.downloadUser('9');
+  eq(forcedUser.saved, 3, 'clearUser 使作者全量支持强制重抓全部系列与散篇');
+  const s60Dir = userCore.writer.seriesDir('作者九', '9', '系列六十', '60');
+  eq(fs.readdirSync(s60Dir).filter(f => f.startsWith('001 ') && f.endsWith('.txt')).length, 1, '章节改名重抓后旧名 txt 已归档为 .bak 不重复残留');
+
+  const { parseProxy, connectHeaders } = require('../src/engine/proxy');
+  const pInfo = parseProxy('alice:secret@127.0.0.1:7897');
+  eq([pInfo.host, pInfo.port, connectHeaders('pixiv.net:443', pInfo)['Proxy-Authorization']],
+    ['127.0.0.1', 7897, 'Basic ' + Buffer.from('alice:secret').toString('base64')], '支持省略协议头的代理地址与 Basic 鉴权');
+  const { Fetcher } = require('../src/engine/pixiv/fetcher');
+  const pixivFetcher = new Fetcher({ proxy: '127.0.0.1:7897', maxRetries: 1, intervalMs: 200 });
+  pixivFetcher._pace = async () => {};
+  pixivFetcher._request = async () => ({ status: 502, headers: {}, text: '', json: null });
+  await assert.rejects(pixivFetcher.getJson('https://www.pixiv.net/ajax/novel/1'), /HTTP 502/); pass++;
+  eq(pixivFetcher._useProxy, true, 'Pixiv 收到 HTTP 5xx 时不将代理通道翻转为直连');
+
+  let redirectHops = 0;
+  const redirectHttps = { request: (opts, cb) => {
+    redirectHops++;
+    const req = new EventEmitter(); req.destroy = err => req.emit('error', err);
+    req.end = () => queueMicrotask(() => {
+      const res = new EventEmitter(); res.resume = () => {};
+      if (redirectHops === 1) { res.statusCode = 302; res.headers = { location: '/final' }; cb(res); }
+      else { res.statusCode = 200; res.headers = {}; cb(res); res.emit('data', Buffer.from('ok')); res.emit('end'); }
+    });
+    return req;
+  } };
+  const redirectFetcher = load('src/engine/cool18/fetcher.js', { https: redirectHttps, '../async': { sleep: async () => {} } });
+  eq(await redirectFetcher.fetchPage('https://example.invalid/start', { retries: 1 }), 'ok', 'cool18 请求支持自动跟随 302 重定向');
+
+  // 7) Panel 忽略 output 非文稿编辑器；状态栏反映 enabled=false 与引号计数；offsetAt 零拷贝；后台 t2s；空文档消空行不写回
+  const docEd = { selection: { active: { line: 0 } }, document: { uri: { scheme: 'file' }, isClosed: false, lineCount: 1, lineAt: () => ({ text: '正文' }), fileName: 'novel.txt' } };
+  const outEd = { selection: { active: { line: 0 } }, document: { uri: { scheme: 'output' }, isClosed: false, lineCount: 1, lineAt: () => ({ text: '日志' }), fileName: 'extension-output' } };
+  const panelVs = {
+    window: { activeTextEditor: outEd, createStatusBarItem: () => ({ show() {}, hide() {} }) },
+    workspace: { getConfiguration: () => ({ get: (_k, d) => d }) },
+    StatusBarAlignment: { Right: 1 },
+  };
+  const { PanelManager: FilteredPanel } = load('src/ui/panel.js', { vscode: panelVs });
+  const fp = new FilteredPanel({ subscriptions: [] }, { appliesTo: () => true, counts: () => ({ ws: 0, mid: 0, short: 0, quote: 0, silenced: false }) }, {});
+  fp.lastEditor = docEd;
+  eq(fp.editor(), docEd, '活动编辑器为 output 通道时回退到最近文稿编辑器');
+
+  let sbVisible = false;
+  const sbItem = { text: '', tooltip: '', show() { sbVisible = true; }, hide() { sbVisible = false; } };
+  let cfgEnabled = false;
+  const checkerVs = {
+    window: { activeTextEditor: docEd, createStatusBarItem: () => sbItem },
+    languages: { createDiagnosticCollection: () => ({ set() {}, delete() {}, clear() {}, get: () => [{ code: 'quote-pair' }], dispose() {} }) },
+    workspace: { getConfiguration: () => ({ get: (k, d) => k === 'enabled' ? cfgEnabled : d }) },
+    StatusBarAlignment: { Right: 1 },
+  };
+  const { Checker } = load('src/service/checker.js', { vscode: checkerVs });
+  const ck = new Checker({ subscriptions: [] });
+  ck.refreshStatusBar();
+  eq(sbItem.text, '贴左:关', 'enabled=false 时状态栏显示已关闭而非 ✓');
+  cfgEnabled = true;
+  ck.refreshStatusBar();
+  eq(sbItem.text, '贴左:0 引号:1', '状态栏纳入引号配对问题计数');
+  checkerVs.window.activeTextEditor = outEd;
+  ck.refreshStatusBar();
+  eq(sbVisible, false, '焦点在 output 通道时隐藏贴左状态栏');
+
+  let getTextCalled = false;
+  eq(isLargeDocument({
+    lineCount: 10,
+    lineAt: () => ({ text: 'x' }),
+    offsetAt: () => 400000,
+    getText: () => { getTextCalled = true; return ''; },
+  }), true, 'offsetAt 可用时判定超长文档');
+  eq(getTextCalled, false, 'isLargeDocument 通过 offsetAt 零拷贝计算，不调用 getText');
+
+  const t2sWorker = new AnalysisWorker();
+  try {
+    const t2sRes = await t2sWorker.run('t2s', { text: '看著書\n乾坤' });
+    eq(t2sRes.lines, ['看着书', '乾坤'], '后台线程 t2s 转换结果准确');
+    eq([t2sRes.summary.totalChanges, t2sRes.summary.protectedTotal], [2, 1], '后台线程 t2s 汇总计数准确');
+  } finally { t2sWorker.dispose(); }
+
+  const emptyOrgCmds = {}, emptyOrgWrites = [], emptyOrgMsgs = [];
+  load('src/commands/organize.js', {
+    vscode: { window: { showInformationMessage: m => emptyOrgMsgs.push(m) } },
+    '../core/editor': { docLines: () => [''], applyLines: async (_e, l) => emptyOrgWrites.push(l), noDoc() {} },
+  }).registerOrganizeCommands({ reg: (n, f) => { emptyOrgCmds[n] = f; }, panel: { editor: () => ({ document: {} }) }, checker: {}, cfg: () => ({ get: (_k, d) => d }) });
+  await emptyOrgCmds.removeBlankLines();
+  eq(emptyOrgWrites.length, 0, '空文档执行消除空白行不触发无意义写回');
+  eq(emptyOrgMsgs[0], '没有空白行可消除', '空文档执行消除空白行提示无空行可消');
+
   console.log('===== 审查回归：通过 ' + pass + '，失败 0 =====');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

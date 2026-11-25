@@ -2,7 +2,7 @@
   "name": "novel-toolkit",
   "displayName": "小说工具箱 Novel Toolkit",
   "description": "朱墨主题的小说工具箱：空白、短行与引号检查，段落整理、繁简转换、章节导航、文件夹批量整理，以及 cool18/Pixiv 小说抓取。",
-  "version": "0.19.0",
+  "version": "0.19.1",
   "publisher": "localtools",
   "license": "MIT",
   "repository": {
@@ -294,7 +294,7 @@
         "novelToolkit.chapterPattern": {
           "type": "string",
           "default": "",
-          "description": "章节名识别正则（对每一行做测试）。留空使用内置识别，支持中文章节号、卷名、序章/番外、Chapter N 和标题内 ！？… 等标点；自定义正则未命中的行仍可能由内置上下文规则识别"
+          "description": "章节名识别正则（对每一行做测试）。留空使用内置识别（支持中文章节号含廿/卅/卌、卷名、序章/番外、Chapter N、标题内 ！？… 标点及上下文兜底）；填写合法自定义正则时严格按该正则匹配，不叠加内置松散规则"
         },
         "novelToolkit.batchBackup": {
           "type": "boolean",

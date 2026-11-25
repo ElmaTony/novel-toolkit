@@ -7,6 +7,7 @@
 const https = require('https');
 const http = require('http');
 const { URL } = require('url');
+const { parseProxy, connectHeaders } = require('../proxy');
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 const BASE = 'https://www.pixiv.net';
@@ -131,7 +132,8 @@ class Fetcher {
         }
         const waitMs = [3000, 8000, 20000][Math.min(attempt, 2)];
         this.log(`网络错误(${netErr ? netErr.message : 'HTTP ' + res.status})，${waitMs / 1000}s 后重试: ${url}`);
-        this._flipChannel();
+        // 仅连接/隧道错误才翻转通道；收到 HTTP 5xx 说明当前通道连通正常，避免误切到不通的直连白等超时
+        if (netErr) this._flipChannel();
         await sleep(waitMs, this.signal);
         continue;
       }
@@ -182,14 +184,15 @@ class Fetcher {
   // 经 HTTP 代理 CONNECT 隧道访问 443
   _viaProxy(urlStr) {
     const u = new URL(urlStr);
-    const p = new URL(this.proxy);
+    const p = parseProxy(this.proxy);
+    const targetHostPort = `${u.hostname}:${Number(u.port) || 443}`;
     return new Promise((resolve, reject) => {
       const tunnel = http.request({
-        host: p.hostname,
-        port: Number(p.port) || 80,
+        host: p.host,
+        port: p.port,
         method: 'CONNECT',
-        path: `${u.hostname}:443`,
-        headers: { Host: `${u.hostname}:443` },
+        path: targetHostPort,
+        headers: connectHeaders(targetHostPort, p),
         timeout: this.timeoutMs,
         signal: this.signal || undefined,
       });

@@ -289,8 +289,12 @@ class ScrapeManager {
       for (const t of targets) {
         if (controller.signal.aborted) break;
         try {
-          if (force && (t.type === 'series' || t.type === 'novel')) {
-            const existed = t.type === 'series' ? core.clearSeries(t.id) : core.clearNovel(t.id);
+          if (force) {
+            const existed = t.type === 'series'
+              ? (core.clearSeries && core.clearSeries(t.id))
+              : t.type === 'user'
+                ? (core.clearUser && core.clearUser(t.id))
+                : (core.clearNovel && core.clearNovel(t.id));
             reporter.report('强制重抓：已准备备份替换 ' + t.type + ':' + t.id + (existed ? ' 的文件' : ' 的目标文件'));
           }
           const r = t.type === 'series'
@@ -426,7 +430,12 @@ class ScrapeManager {
       const key = file + ':' + (stat ? stat.mtimeMs + ':' + stat.ctimeMs + ':' + stat.size : 'missing');
       if (!this.snapshotCache || this.snapshotCache.key !== key) {
         const manifest = stat ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
-        series = Object.entries(manifest.series || {}).map(([id, e]) => ({ id, title: e.title || id, author: e.author || '', count: e.count || (e.files || []).length }));
+        series = Object.entries(manifest.series || {}).map(([id, e]) => {
+          const savedLen = Array.isArray(e.files) ? e.files.length : 0;
+          const totalLen = e.count || savedLen;
+          const count = (savedLen > 0 && totalLen > savedLen) ? (savedLen + '/' + totalLen) : totalLen;
+          return { id, title: e.title || id, author: e.author || '', count };
+        });
         novelCount = Object.keys(manifest.novels || {}).length;
         this.snapshotCache = { key, series, novelCount };
       } else ({ series, novelCount } = this.snapshotCache);

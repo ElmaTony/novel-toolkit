@@ -121,7 +121,7 @@ Press `Alt+F10` / `Alt+F11` or click **小说工具箱** in the status bar to op
 | **Organize · Chapters &amp; Batch** | Check Missing/Duplicate Chapters, Unify Chapter Numbers, Batch Process Folder; the Organize section is collapsible and remembers its state |
 | **Outline** | Volume-grouped chapters with sticky volume headers, search filtering (Enter jumps to the first match, Esc clears), vermilion active-chapter highlight, Locate Current, previous/next chapter, and click-to-jump |
 
-> Quote pair checks compare opening and closing quote counts per line and work best after merging wrapped lines. Chapter detection, paragraph merging, and T2S conversion use heuristics—review changes against the original text when needed.
+> Quote pair checks match opening and closing quotes in order per line (catching inverted pairs while ignoring English contractions like `don’t`) and work best after merging wrapped lines. Chapter detection, paragraph merging, and T2S conversion use heuristics—review changes against the original text when needed.
 
 ---
 
@@ -139,7 +139,7 @@ Supports novel, series, author, and legacy `novel/show.php?id=...` URLs. Multipl
 | **Author All…** | Author (user) ID |
 
 - **ID-Isolated Paths**: Defaults to `~/Novels/pixiv`. Author folders, single-novel filenames, and series folders include their numeric IDs so same-named titles never collide. Series outputs include numbered chapter files, `_合并.txt`, and optional URL notes / `.meta.json` sidecars in UTF-8 with CRLF line endings.
-- **Manifest &amp; Self-Healing**: `pixiv-manifest.json` stores relative paths and stays compatible with legacy folder layouts. Re-running a series skips existing valid chapters, retries failed ones, and re-fetches missing files or empty title-only shells while preserving legitimate short texts. Incremental updates detect new chapters via published chapter count increases; re-run the series directly if local chapters are missing while the total count is unchanged.
+- **Manifest &amp; Self-Healing**: `pixiv-manifest.json` stores relative paths and stays compatible with legacy folder layouts. Re-running a series skips existing valid chapters, retries failed ones, and re-fetches missing files or empty title-only shells while preserving legitimate short texts. Incremental updates both detect newly published chapters and automatically resume incomplete series that were canceled or had failed chapters.
 - **Safe Force Re-Download**: Normal runs skip existing text files. With **Force Re-Download** enabled, the extension downloads content first and only backs up the existing file as a timestamped `.bak` before replacing it upon success—failed or canceled runs keep original files intact and never delete an entire series directory. Writes outside the output root or across symlinks/junctions (including dangling symlinks) are rejected.
 - **Cookies &amp; Restricted Works**: Login-gated works and author work lists may require a Pixiv cookie (`PHPSESSID` or full Cookie header), stored securely in VS Code SecretStorage. Empty bodies are recorded as failures, and 3 consecutive empty chapters abort the remaining series so you can fix credentials and resume.
 
@@ -153,7 +153,7 @@ Paste thread URLs or IDs (one per line), search by keyword with multi-select, or
 
 ### Proxy Configuration
 
-Both cool18 and Pixiv default to HTTP proxy **`http://127.0.0.1:7897`** (`novelToolkit.cool18Proxy` and `novelToolkit.pixivProxy`).
+Both cool18 and Pixiv default to HTTP proxy **`http://127.0.0.1:7897`** (`novelToolkit.cool18Proxy` and `novelToolkit.pixivProxy`; `host:port` shorthand and `http://user:pass@host:port` Basic auth are supported).
 
 > [!IMPORTANT]
 > Leaving the new proxy setting blank falls back to legacy `cool18Novel.proxy` / `pixivNovel.proxy`, and if unset still falls back to `http://127.0.0.1:7897`. To connect directly without a proxy, explicitly set both the new and legacy proxy settings to an empty string `""` and confirm in the scrape log.
@@ -183,7 +183,7 @@ Both cool18 and Pixiv default to HTTP proxy **`http://127.0.0.1:7897`** (`novelT
 
 Run **Batch Process Folder** from Organize · Chapters & Batch or the Command Palette to recursively process `.txt` files (symlinks and junctions are never followed; only one batch job runs at a time):
 
-- **Pipeline**: Merge line wraps → dedent → add first-line indent; modified files are atomically written as UTF-8 BOM + CRLF, while 0-byte empty files remain untouched.
+- **Pipeline**: Merge line wraps → dedent → add first-line indent; files with text changes or non-UTF-8 encodings (GB18030 / Big5 / UTF-16) are atomically written as UTF-8 + CRLF (preserving any existing UTF-8 BOM without injecting one into BOM-less files), while 0-byte empty files remain untouched.
 - **Backup &amp; Cancellation**: `novelToolkit.batchBackup` is enabled by default and saves `file.txt.bak` once without overwriting existing backups. Cancellation stops cleanly after the current file.
 - **Large Files &amp; Safety**: Files larger than 512 KB run in a background worker thread and verify the file was not modified externally before writing.
 - **Internal Decoding**: Batch processing and scraping decode common Chinese encodings internally (valid UTF-8 preserved first, plus UTF-8 BOM, UTF-16 LE/BE, GB18030, and Big5). Files decoding with `U+FFFD` or `NUL` are skipped untouched and logged for review.

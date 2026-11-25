@@ -3,9 +3,16 @@
 const vscode = require('vscode');
 const chapters = require('../engine/chapters');
 const { buildPanelHtml } = require('./panel-html');
-const { parseCool18Entries, parsePixivInput } = require('../service/scrape');
+const { parseEntries: parseCool18Entries } = require('../engine/cool18/parse');
+const { parseInput: parsePixivInput } = require('../engine/pixiv/parseInput');
 const { RUNNABLE, HOST_COMMANDS } = require('./messages');
 const { AnalysisWorker, isLargeDocument } = require('../engine/analysis-worker');
+
+function isDocEditor(editor) {
+  if (!editor || !editor.document || editor.document.isClosed) return false;
+  const scheme = editor.document.uri && editor.document.uri.scheme;
+  return !scheme || scheme === 'file' || scheme === 'untitled';
+}
 
 // RUNNABLE / HOST_COMMANDS 集中定义在 ./messages
 
@@ -43,10 +50,11 @@ class PanelManager {
     context.subscriptions.push(this.cancelItem);
   }
 
-  // 面板按钮始终作用于最近编辑的文件
+  // 面板按钮始终作用于最近编辑的文稿文件（忽略 output/debug 等非文稿面板）
   editor() {
-    const editor = vscode.window.activeTextEditor || this.lastEditor;
-    return editor && !editor.document.isClosed ? editor : null;
+    const active = vscode.window.activeTextEditor;
+    if (isDocEditor(active)) return active;
+    return isDocEditor(this.lastEditor) ? this.lastEditor : null;
   }
 
   reveal() {
@@ -221,7 +229,7 @@ class PanelManager {
       };
       const r = await this.scrape.executePixiv(targets, reporter, undefined, { force: !!msg.force });
       if (r && r.authError) {
-        this.postNotice('Cookie 缺失或已失效 —— 点「Cookie…」设置后重试');
+        this.postNotice('Cookie 缺失或已失效 —— 点「管理 Cookie」设置后重试');
         vscode.commands.executeCommand('novelToolkit.pixivSetCookie');
       }
       this.postScrapeState();
@@ -245,7 +253,7 @@ class PanelManager {
       };
       const r = await this.scrape.executePixiv(targets, reporter, undefined, { force: !!msg.force });
       if (r && r.authError) {
-        this.postNotice('Cookie 缺失或已失效 —— 点「Cookie…」设置后重试');
+        this.postNotice('Cookie 缺失或已失效 —— 点「管理 Cookie」设置后重试');
         vscode.commands.executeCommand('novelToolkit.pixivSetCookie');
       }
       this.postScrapeState();
@@ -284,15 +292,21 @@ class PanelManager {
     const version = doc.version;
     const cached = this.chapterCache.get(doc);
     if (version !== undefined && cached && cached.version === version && cached.pattern === pattern) return cached.entries;
-    const lines = [];
-    for (let i = 0; i < doc.lineCount; i++) lines.push(doc.lineAt(i).text);
-    const entries = isLargeDocument(doc)
-      ? this.analysis.run('chapters', { text: lines.join('\n'), pattern }).catch((error) => {
-          const cur = this.chapterCache.get(doc);
-          if (cur && cur.entries === entries) this.chapterCache.delete(doc);
-          throw error;
-        })
-      : chapters.chapterEntries(lines, pattern);
+    let entries;
+    if (isLargeDocument(doc)) {
+      const text = typeof doc.getText === 'function'
+        ? doc.getText()
+        : Array.from({ length: doc.lineCount }, (_, i) => doc.lineAt(i).text).join('\n');
+      entries = this.analysis.run('chapters', { text, pattern }).catch((error) => {
+        const cur = this.chapterCache.get(doc);
+        if (cur && cur.entries === entries) this.chapterCache.delete(doc);
+        throw error;
+      });
+    } else {
+      const lines = [];
+      for (let i = 0; i < doc.lineCount; i++) lines.push(doc.lineAt(i).text);
+      entries = chapters.chapterEntries(lines, pattern);
+    }
     if (version !== undefined) this.chapterCache.set(doc, { version, pattern, entries });
     return entries;
   }
@@ -380,8 +394,7 @@ class PanelManager {
     }
     this.updateTimer = setTimeout(() => {
       this.updateTimer = null;
-      this.update().catch(error => this.scrape.log('面板更新失败: ' + error.message));
-      this.postScrapeState();
+      this.update().catch(error => this.scrape.log && this.scrape.log('面板更新失败: ' + error.message));
     }, 300);
   }
 }

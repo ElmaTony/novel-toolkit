@@ -10,7 +10,7 @@ const { cnNumeral } = require('./cool18/parse');
 //   3) 空格分隔的标题上限 30 字（长标题不再被截）
 //   4) 编号 1~9 位（覆盖 第一千零二十四章 这类长数字）, 且允许 第 12 章 式空格
 //   5) 容忍整行被 【】（）[] 包裹, Chapter 大小写, 繁体 終章/後記/尾聲
-const NUM_CHARS = '〇零一二三四五六七八九十百千万两0-9０-９';
+const NUM_CHARS = '〇零一二三四五六七八九十百千万两廿卅卌0-9０-９';
 // 标题尾部规则 v3:
 //   - 空格分隔的标题放宽到 40 字，允许 ！？…（章节标题常见），但仍禁止 。；
 //   - 无空格紧贴标题保留 6 字上限，避免把正文句子当成章节名；
@@ -68,9 +68,10 @@ function isLooseChapterLine(lines, i, cand) {
 
 // 编译结果按模式串缓存: 面板每次防抖更新都会调 buildChapterRegex，避免重复编译
 const _regexCache = new Map();
+const _invalidPatterns = new Set();
 
 function buildChapterRegex(pattern) {
-  const key = pattern || '';
+  const key = String(pattern || '').trim();
   let re = _regexCache.get(key);
   if (re) {
     return re;
@@ -78,6 +79,7 @@ function buildChapterRegex(pattern) {
   try {
     re = new RegExp(key || DEFAULT_CHAPTER_PATTERN);
   } catch (e) {
+    _invalidPatterns.add(key);
     re = new RegExp(DEFAULT_CHAPTER_PATTERN);
   }
   _regexCache.set(key, re);
@@ -90,15 +92,17 @@ function chapterLines(lines, pattern) {
 }
 
 // 卷-章两级结构: 卷行（第一卷/卷二/【第一卷】/第 1 卷）标记 kind='volume', 章行 kind='chapter'
-const VOLUME_RE = /^\s*(?:[\[【（(]\s*)?(?:第\s*[〇零一二三四五六七八九十百千万两0-9０-９]{1,9}\s*卷(?![章节话回集部])|卷[〇零一二三四五六七八九十百千万两0-9０-９]{1,9})/;
+const VOLUME_RE = /^\s*(?:[\[【（(]\s*)?(?:第\s*[〇零一二三四五六七八九十百千万两廿卅卌0-9０-９]{1,9}\s*卷(?![章节话回集部])|卷[〇零一二三四五六七八九十百千万两廿卅卌0-9０-９]{1,9})/;
 
 function chapterEntries(lines, pattern) {
-  const re = buildChapterRegex(pattern);
+  const key = String(pattern || '').trim();
+  const re = buildChapterRegex(key);
+  const useLooseFallback = !key || _invalidPatterns.has(key);
   const out = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     let ok = re.test(line);
-    if (!ok) {
+    if (!ok && useLooseFallback) {
       const cand = looseChapterTail(line);
       ok = isLooseChapterLine(lines, i, cand);
     }
@@ -158,8 +162,8 @@ function numToCn(num) {
 // 第N+单位（第123章 / 第 12 章 / 第４５卷…）。只取行内第一处 = 章节标记本身；
 // 且 unifyChapterNumbers 只处理已通过章节正则识别的行，正文里的"第3次"碰不到
 const CH_ARABIC_RE = /(第\s*)([0-9０-９]+)(?=\s*[章节卷回部集话])/;
-// 行首"卷N"样式（卷123）
-const VOL_ARABIC_RE = /^(\s*卷)([0-9０-９]+)/;
+// 行首"卷N"样式（卷123 / 【卷1】 / （卷2））
+const VOL_ARABIC_RE = /^(\s*(?:[\[【（(]\s*)?卷)([0-9０-９]+)/;
 
 function fwToInt(s) {
   let v = 0;
@@ -208,7 +212,7 @@ const FW_DIG_MAP = { '０': '0', '１': '1', '２': '2', '３': '3', '４': '4',
 
 // 从章节行提取编号: 第12章→12, 第十二章→12, 第一千零二十四章→1024; 序章/番外→null
 function chapterNumber(title) {
-  const m = String(title || '').match(/第\s*([0-9０-９〇零一二三四五六七八九十百千万两]+)\s*[章节回集话]/);
+  const m = String(title || '').match(/第\s*([0-9０-９〇零一二三四五六七八九十百千万两廿卅卌]+)\s*[章节回集话]/);
   if (!m) { const english = String(title || '').match(/\bchapter\s*(\d+)/i); return english ? Number(english[1]) : null; }
   const raw = m[1].replace(/[０-９]/g, (c) => FW_DIG_MAP[c]);
   if (/^\d+$/.test(raw)) { return Number(raw); }

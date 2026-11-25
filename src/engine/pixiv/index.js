@@ -49,6 +49,7 @@ class PixivCore {
     this.log = opts.log || (() => {});
     this.forceSeries = new Set();
     this.forceNovels = new Set();
+    this.forceUsers = new Set();
   }
 
   parseInput(t) { return parseInput(t); }
@@ -105,6 +106,12 @@ class PixivCore {
     this.forceNovels.add(key);
     return !!entry;
   }
+  clearUser(id) {
+    const key = String(id);
+    this.forceUsers.add(key);
+    return Object.values(this.writer.manifest.series).some((e) => e && String(e.userId) === key) ||
+      Object.values(this.writer.manifest.novels).some((e) => e && String(e.userId) === key);
+  }
 
   // 系列 → 作者名/系列名/NNN 标题.txt + _合并.txt + 链接注记
   // 章节列表本身只含 {id, order}（无标题），标题随正文一并抓取；已抓过的章按 manifest 记录跳过
@@ -139,6 +146,7 @@ class PixivCore {
     let saved = 0;
     let skipped = 0;
     let emptyStreak = 0;
+    let completedNormally = false;
     const total = chapters.length;
     try {
     for (let i = 0; i < total; i++) {
@@ -147,11 +155,16 @@ class PixivCore {
       const order = ch.order || i + 1;
       let forceWrite = force;
       const known = knownIds.get(String(ch.id));
+      let oldKnownPath = null;
+      if (known && known.file) {
+        try { oldKnownPath = this.writer.safePath(known.file); } catch (_) { oldKnownPath = null; }
+      }
       if (known && !force && !ambiguousLegacy) {
         // 自愈: manifest 记录已抓, 但文件已不在盘上（被手动清理）或只剩标题行空壳（空正文 bug 的产物）→ 重新下载
-        const knownPath = known.file ? this.writer.safePath(known.file) : legacy
+        const knownPath = oldKnownPath || (legacy
           ? this.writer.legacyChapterPath(legacyAuthor, entry.userId, legacyTitle, known.order || order, known.title || '第' + order + '话')
-          : this.writer.chapterPath(meta.userName, meta.userId, meta.title, known.order || order, known.title, seriesId);
+          : this.writer.chapterPath(meta.userName, meta.userId, meta.title, known.order || order, known.title, seriesId));
+        oldKnownPath = knownPath;
         known.file = this.writer.relative(knownPath);
         if (fs.existsSync(knownPath)) {
           let shellOnly = false;
@@ -183,7 +196,7 @@ class PixivCore {
           this.log(`章节 ${ch.id}（${novel.title}）：${msg}`);
           failures.push({ id: ch.id, title: novel.title, kind: 'empty', message: msg });
           if (emptyStreak >= 3) {
-            this.log('连续 3 章空正文 —— 停止本系列剩余章节。请通过“Cookie…”检查 Cookie 是否失效、账号是否开启 R-18 显示，处理后重新抓取即可自动补齐。');
+            this.log('连续 3 章空正文 —— 停止本系列剩余章节。请通过“管理 Cookie”检查 Cookie 是否失效、账号是否开启 R-18 显示，处理后重新抓取即可自动补齐。');
             break;
           }
           continue;
@@ -191,9 +204,14 @@ class PixivCore {
         emptyStreak = 0;
         const file = this.writer.chapterPath(meta.userName, meta.userId, meta.title, order, novel.title, seriesId);
         // 首行 = 章节名（网页上的”第X章 XXXX”），供章节导航与合并版直接识别
-        // forceWrite: 仅当确认既有文件是缺失后重抓的残留空壳时才允许覆盖
         const r = this.writer.saveText(file, chapterTitleLine(order, novel.title) + '\n\n' + rendered.text, { overwrite: forceWrite, backup: true });
-        if (!r.skipped) saved++;
+        if (!r.skipped) {
+          saved++;
+          // 章节标题改名且重抓成功时，将旧路径文件归档为 .bak，避免目录残留两份同序号章节
+          if (oldKnownPath && path.resolve(oldKnownPath) !== path.resolve(file) && fs.existsSync(oldKnownPath)) {
+            try { fs.renameSync(oldKnownPath, oldKnownPath + '.' + Date.now() + '.bak'); } catch (_) { /* ignore */ }
+          }
+        }
         const record = known || {};
         Object.assign(record, { id: String(ch.id), order, title: novel.title, file: this.writer.relative(file) });
         if (!known) entry.files.push(record);
@@ -208,14 +226,19 @@ class PixivCore {
         this.log(`章节 ${ch.id} 失败(${e.kind}): ${e.message}`);
       }
     }
-
-    } finally { this.writer.saveManifest(); }
+    completedNormally = true;
+    } finally { if (!completedNormally) this.writer.saveManifest(); }
     this.forceSeries.delete(String(seriesId));
+    const wasAborted = !!(ctx.signal && ctx.signal.aborted);
+    const prevCount = entry.count;
     entry.count = meta.publishedContentCount;
+    entry.aborted = wasAborted;
     entry.fetchedAt = new Date().toISOString();
     entry.failed = failures;
     this.writer.writeUrlNote(dir, seriesUrl(seriesId), meta.title);
-    if (!ctx.signal || !ctx.signal.aborted) this.writeMerged(meta, chapters, dir, entry);
+    const mergedTarget = path.join(dir, '_合并.txt');
+    const needMerged = !wasAborted && (saved > 0 || failures.length > 0 || force || prevCount !== meta.publishedContentCount || !entry.mergedFile || !fs.existsSync(mergedTarget));
+    if (needMerged) this.writeMerged(meta, chapters, dir, entry);
     this.writer.saveManifest();
     ctx.onProgress && ctx.onProgress(total, total, `系列《${meta.title}》完成 新${saved}/跳${skipped}/败${failures.length}`);
     return {
@@ -227,8 +250,9 @@ class PixivCore {
       saved,
       skipped,
       failures,
-      savedChapterIds: entry.files.map((f) => f.id),
-      mergedFile: path.join(dir, '_合并.txt'),
+      savedChapterIds: entry.files.map((f) => String(f.id)),
+      allChapterIds: chapters.map((c) => String(c.id)),
+      mergedFile: mergedTarget,
     };
   }
 
@@ -267,27 +291,35 @@ class PixivCore {
       throw new PixivError('auth', `作者 ${brief.name || userId} 的作品列表为空且未配置 Cookie：R-18 作者的作品 ID 列表登录后才可见（也可能是该作者确实没有作品）`);
     }
     this.log(`作者 ${brief.name || userId}：${works.seriesIds.length} 个系列 / ${works.novelIds.length} 个作品 ID`);
+    const force = this.forceUsers.has(String(userId));
+    this.forceUsers.delete(String(userId));
     const covered = new Set();
     const seriesResults = [];
     const failures = [];
     for (const sid of works.seriesIds) {
       if (ctx.signal && ctx.signal.aborted) break;
       try {
+        if (force) this.clearSeries(sid);
         const r = await this.downloadSeries(sid, ctx);
         seriesResults.push(r);
         failures.push(...r.failures.map(f => '系列 ' + sid + ' / ' + f.id + ': ' + f.message));
-        r.savedChapterIds.forEach((id) => covered.add(id));
+        (r.allChapterIds || r.savedChapterIds || []).forEach((id) => covered.add(String(id)));
       } catch (e) {
+        const knownSeries = this.writer.manifest.series[sid];
+        if (knownSeries && Array.isArray(knownSeries.files)) {
+          knownSeries.files.forEach((f) => f && f.id && covered.add(String(f.id)));
+        }
         if (e.kind === 'auth') throw e;
         if (ctx.signal && ctx.signal.aborted) break;
         failures.push(`系列 ${sid}: ${e.message}`);
       }
     }
-    const rest = works.novelIds.filter((id) => !covered.has(id));
+    const rest = works.novelIds.filter((id) => !covered.has(String(id)));
     const novelResults = [];
     for (const nid of rest) {
       if (ctx.signal && ctx.signal.aborted) break;
       try {
+        if (force) this.clearNovel(nid);
         novelResults.push(await this.downloadNovel(nid, ctx));
       } catch (e) {
         if (e.kind === 'auth') throw e;
@@ -311,12 +343,19 @@ class PixivCore {
       if (ctx.signal && ctx.signal.aborted) break;
       try {
         const meta = await this.api.seriesMeta(sid);
-        const oldCount = entry.count || (entry.files || []).length;
-        if (meta.publishedContentCount > oldCount) {
-          this.log(`《${entry.title}》${oldCount} → ${meta.publishedContentCount} 章，补抓新章`);
+        const savedCount = (entry.files || []).length;
+        const oldCount = entry.count || savedCount;
+        const incomplete = !!entry.aborted || (Array.isArray(entry.failed) && entry.failed.length > 0) ||
+          (oldCount > 0 && savedCount < Math.min(oldCount, meta.publishedContentCount));
+        if (meta.publishedContentCount > oldCount || incomplete) {
+          this.log(meta.publishedContentCount > oldCount
+            ? `《${entry.title}》${oldCount} → ${meta.publishedContentCount} 章，补抓新章`
+            : `《${entry.title}》上次未抓完（已存 ${savedCount}/${meta.publishedContentCount} 章），继续补齐`);
           const result = await this.downloadSeries(sid, ctx);
           failures.push(...result.failures.map(f => '系列 ' + sid + ' / ' + f.id + ': ' + f.message));
-          updates.push({ id: sid, title: entry.title, oldCount, newCount: meta.publishedContentCount, saved: result.saved, failures: result.failures.length });
+          if (result.saved > 0 || meta.publishedContentCount > oldCount) {
+            updates.push({ id: sid, title: entry.title, oldCount: savedCount, newCount: meta.publishedContentCount, saved: result.saved, failures: result.failures.length });
+          }
         } else {
           this.log(`《${entry.title}》无更新（${oldCount} 章）`);
         }

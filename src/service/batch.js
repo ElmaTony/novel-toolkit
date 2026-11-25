@@ -113,13 +113,15 @@ class BatchProcessor {
       normalizeExisting: o.normalizeExisting,
     });
     const outText = id.lines.join(o.eol) + o.eol;
-    const changed = outText !== original;
+    const needsTranscode = sourceEncoding !== 'utf8' && sourceEncoding !== 'utf8bom';
+    const changed = outText !== original || needsTranscode;
 
     if (changed) {
       if (o.backup) {
         writeBackupOnce(file, buf);
       }
-      writeFileAtomic(file, '\ufeff' + outText);
+      const prefix = sourceEncoding === 'utf8bom' ? '\ufeff' : '';
+      writeFileAtomic(file, prefix + outText);
     }
     return {
       file,

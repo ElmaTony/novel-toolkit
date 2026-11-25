@@ -5,12 +5,24 @@
 
 const vscode = require('vscode');
 
+function isDocEditor(editor) {
+  if (!editor || !editor.document || editor.document.isClosed) {
+    return false;
+  }
+  const scheme = editor.document.uri && editor.document.uri.scheme;
+  return !scheme || scheme === 'file' || scheme === 'untitled';
+}
+
 function docLines(doc) {
   const out = new Array(doc.lineCount);
   for (let i = 0; i < doc.lineCount; i++) {
     out[i] = doc.lineAt(i).text;
   }
   return out;
+}
+
+function docText(doc) {
+  return typeof doc.getText === 'function' ? doc.getText() : docLines(doc).join('\n');
 }
 
 const eolOf = (doc) => (doc.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n');
@@ -45,4 +57,4 @@ function jumpToLine(editor, lines, target, label) {
 
 const noDoc = () => vscode.window.showInformationMessage('当前没有打开的文件');
 
-module.exports = { docLines, eolOf, applyLines, jumpToLine, noDoc };
+module.exports = { isDocEditor, docLines, docText, eolOf, applyLines, jumpToLine, noDoc };

@@ -9,6 +9,7 @@ const { ScrapeManager } = require('./src/service/scrape');
 const { registerNavigationCommands } = require('./src/commands/navigation');
 const { registerOrganizeCommands, disposeOrganize } = require('./src/commands/organize');
 const { isLargeDocument } = require('./src/engine/analysis-worker');
+const { isDocEditor } = require('./src/core/editor');
 const { registerFileCommands } = require('./src/commands/files');
 const { registerBatchCommands } = require('./src/commands/batch');
 const { registerScrapeCommands } = require('./src/commands/scrape');
@@ -41,6 +42,7 @@ function activate(context) {
       for (const doc of vscode.workspace.textDocuments) checker.checkDocument(doc, true);
       panel.chapterCache = new WeakMap();
       panel.scheduleUpdate();
+      panel.postScrapeState();
     }),
     vscode.workspace.onDidOpenTextDocument((d) => checker.checkDocument(d)),
     vscode.workspace.onDidCloseTextDocument((d) => checker.forget(d)),
@@ -62,7 +64,7 @@ function activate(context) {
       panel.scheduleUpdate();
     }),
     vscode.window.onDidChangeActiveTextEditor((e) => {
-      if (e) {
+      if (isDocEditor(e)) {
         panel.lastEditor = e;
         checker.checkDocument(e.document);
       }
@@ -76,7 +78,7 @@ function activate(context) {
     })
   );
 
-  if (vscode.window.activeTextEditor) {
+  if (isDocEditor(vscode.window.activeTextEditor)) {
     panel.lastEditor = vscode.window.activeTextEditor;
     checker.checkDocument(vscode.window.activeTextEditor.document);
   }

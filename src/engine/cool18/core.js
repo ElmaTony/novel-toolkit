@@ -184,6 +184,7 @@ class Cool18Core {
               this.log('[替换] 第 ' + vol + ':' + chapStart + ' 章发现更完整版本（' + prev.t.body.length + ' → ' + t.body.length + ' 字），已替换');
               prev.t = t;
               prev.url = url;
+              prev.key = [vol, chapStart, part, tm ? Number(tm[1]) : 0, chapEnd];
             } else {
               this.log('[跳过] 第 ' + vol + ':' + chapStart + ' 章的重复帖: ' + t.title.slice(0, 30));
             }

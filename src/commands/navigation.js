@@ -18,7 +18,7 @@ function registerNavigationCommands({ reg, panel, checker }) {
       return;
     }
     if (r.ws.length === 0 && r.mid.length === 0 && r.short.length === 0 && r.quote.length === 0) {
-      return vscode.window.showInformationMessage('已扫描全文：没有空白问题（行首/正文），也没有引号配对问题 ✓');
+      return vscode.window.showInformationMessage('已扫描全文：没有空白、标点短行与引号配对问题 ✓');
     }
     if (r.ws.length > 0 || r.mid.length > 0) {
       const blankLines = [...new Set([...r.ws, ...r.mid])].sort((a, b) => a - b);
