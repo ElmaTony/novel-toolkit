@@ -23,9 +23,26 @@ const REDIRECT_CODES = new Set([301, 302, 303, 307, 308]);
 // 返回原始 Buffer（解码交给 parse.decodePage，便于离线测试；自动跟随最多 5 次重定向）
 function requestBuffer(urlStr, { proxy, timeoutMs, signal }, redirectsLeft = 5) {
   return new Promise((resolve, reject) => {
-    const u = new URL(urlStr);
+    let settled = false;
+    const done = (fn, val) => {
+      if (settled) return;
+      settled = true;
+      fn(val);
+    };
+    let u;
+    try {
+      u = new URL(urlStr);
+    } catch (e) {
+      return done(reject, new Error('无效的请求地址: ' + urlStr));
+    }
     if (u.protocol !== 'https:' && u.protocol !== 'http:') {
-      return reject(new Error('不支持的协议: ' + u.protocol));
+      return done(reject, new Error('不支持的协议: ' + u.protocol));
+    }
+    let proxyInfo;
+    try {
+      proxyInfo = parseProxy(proxy);
+    } catch (e) {
+      return done(reject, e);
     }
     const isHttps = u.protocol === 'https:';
     const defaultPort = isHttps ? 443 : 80;
@@ -40,25 +57,26 @@ function requestBuffer(urlStr, { proxy, timeoutMs, signal }, redirectsLeft = 5) 
     };
     const bind = (req) => {
       req.on('timeout', () => req.destroy(new Error('连接超时')));
-      req.on('error', reject);
+      req.on('error', (err) => done(reject, err));
     };
     const onRes = (res) => {
       if (REDIRECT_CODES.has(res.statusCode) && res.headers && res.headers.location) {
         res.resume();
         if (redirectsLeft <= 0) {
-          reject(new Error('重定向次数过多'));
-          return;
+          return done(reject, new Error('重定向次数过多'));
         }
         let nextUrl;
         try { nextUrl = new URL(res.headers.location, urlStr).toString(); }
-        catch (e) { reject(new Error('无效的重定向地址')); return; }
-        requestBuffer(nextUrl, { proxy, timeoutMs, signal }, redirectsLeft - 1).then(resolve, reject);
+        catch (e) { return done(reject, new Error('无效的重定向地址')); }
+        requestBuffer(nextUrl, { proxy, timeoutMs, signal }, redirectsLeft - 1).then(
+          (buf) => done(resolve, buf),
+          (err) => done(reject, err)
+        );
         return;
       }
       if (res.statusCode < 200 || res.statusCode >= 300) {
         res.resume();
-        reject(new Error('HTTP ' + res.statusCode));
-        return;
+        return done(reject, new Error('HTTP ' + res.statusCode));
       }
       const chunks = [];
       let size = 0;
@@ -66,16 +84,18 @@ function requestBuffer(urlStr, { proxy, timeoutMs, signal }, redirectsLeft = 5) 
         size += c.length;
         if (size > 30 * 1024 * 1024) {
           res.destroy();
-          reject(new Error('响应超过 30MB，疑似异常'));
-          return;
+          return done(reject, new Error('响应超过 30MB，疑似异常'));
         }
         chunks.push(c);
       });
-      res.on('end', () => resolve(Buffer.concat(chunks)));
-      res.on('error', reject);
+      res.on('aborted', () => done(reject, new Error('响应连接中断')));
+      res.on('end', () => {
+        if (res.complete === false) return done(reject, new Error('响应未完整传输'));
+        done(resolve, Buffer.concat(chunks));
+      });
+      res.on('error', (err) => done(reject, err));
     };
 
-    const proxyInfo = parseProxy(proxy);
     if (proxyInfo) {
       const targetHostPort = u.hostname + ':' + targetPort;
       if (!isHttps) {
@@ -106,18 +126,18 @@ function requestBuffer(urlStr, { proxy, timeoutMs, signal }, redirectsLeft = 5) 
       tunnel.on('connect', (res, socket) => {
         if (res.statusCode !== 200) {
           socket.destroy();
-          return reject(new Error('代理 CONNECT 失败: HTTP ' + res.statusCode));
+          return done(reject, new Error('代理 CONNECT 失败: HTTP ' + res.statusCode));
         }
         if (signal && signal.aborted) {
           socket.destroy();
-          return reject(new Error('已取消'));
+          return done(reject, new Error('已取消'));
         }
         const req = https.request(Object.assign(base, { socket, agent: false }), onRes);
         bind(req);
         req.end();
       });
       tunnel.on('timeout', () => tunnel.destroy(new Error('代理连接超时')));
-      tunnel.on('error', reject);
+      tunnel.on('error', (err) => done(reject, err));
       tunnel.end();
     } else {
       const transport = isHttps ? https : http;
@@ -130,7 +150,8 @@ function requestBuffer(urlStr, { proxy, timeoutMs, signal }, redirectsLeft = 5) 
 
 // 带 retries 的抓取 → 解码后的页面文本; 取消时抛出含"已取消"的 Error
 async function fetchPage(url, opts = {}) {
-  const retries = opts.retries === undefined ? 4 : Math.max(1, Number(opts.retries) || 4);
+  const rawRetries = opts.retries === undefined ? 4 : Number(opts.retries);
+  const retries = Number.isFinite(rawRetries) ? Math.max(1, Math.min(20, Math.floor(rawRetries))) : 4;
   const signal = opts.signal;
   const log = opts.log || (() => {});
   let lastErr = null;
@@ -148,6 +169,9 @@ async function fetchPage(url, opts = {}) {
     } catch (e) {
       if (signal && signal.aborted) {
         throw new Error('已取消');
+      }
+      if (e && e.isConfigError) {
+        throw e;
       }
       lastErr = e;
       if (i >= retries - 1) { break; }

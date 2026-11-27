@@ -143,15 +143,16 @@ lines.push('// 生成时间: ' + new Date().toISOString().slice(0, 10));
 lines.push('// 字符 ' + chars.length + ' 对 (繁→简主表 + 变体组合; 多候选歧义字默认保持原样, 引擎层另行覆盖)');
 lines.push('// 词组 ' + phrases.length + ' 条 (含恒等词组如 乾坤→乾坤, 阻止字符层误转)');
 lines.push('');
+const jsStr = (s) => "'" + String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'") + "'";
 lines.push('const CHARS = [');
 for (let i = 0; i < chars.length; i += 10) {
-  lines.push('  ' + chars.slice(i, i + 10).map((p) => "'" + p + "'").join(', ') + ',');
+  lines.push('  ' + chars.slice(i, i + 10).map((p) => jsStr(p)).join(', ') + ',');
 }
 lines.push('];');
 lines.push('');
 lines.push('const PHRASES = [');
 for (let i = 0; i < phrases.length; i += 2) {
-  lines.push('  ' + phrases.slice(i, i + 2).map(([t, s]) => "['" + t + "', '" + s + "']").join(', ') + ',');
+  lines.push('  ' + phrases.slice(i, i + 2).map(([t, s]) => '[' + jsStr(t) + ', ' + jsStr(s) + ']').join(', ') + ',');
 }
 lines.push('];');
 lines.push('');

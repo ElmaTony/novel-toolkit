@@ -39,7 +39,7 @@ for (const k of (pkg.contributes.keybindings || [])) {
 const cfgUsed = new Set();
 for (const src of [extSrc, engineSrc, serviceSrc, uiSrc]) {
   // 只匹配 novelToolkit 配置对象及其局部别名；旧配置/私密存储不混入。
-  for (const match of src.matchAll(/(?:\bc|\bcfg\(\)|\bCFG\(\)|this\.cfg\(\)|vscode\.workspace\.getConfiguration\('novelToolkit'\))\.get\(['"]([a-zA-Z0-9]+)['"]/g)) cfgUsed.add(match[1]);
+  for (const match of src.matchAll(/(?:\bc|\bcfg\(\)|\bCFG\(\)|this\.cfg\(\)|vscode\.workspace\.getConfiguration\('novelToolkit'\))\.(?:get|inspect)\(['"]([a-zA-Z0-9]+)['"]/g)) cfgUsed.add(match[1]);
 }
 const cfgDeclared = new Set(Object.keys(pkg.contributes.configuration.properties).map((k) => k.replace('novelToolkit.', '')));
 for (const c of cfgUsed) {

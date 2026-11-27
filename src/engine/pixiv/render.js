@@ -9,7 +9,8 @@ function renderContent(raw, opts = {}) {
   const unknown = [];
   let text = String(raw || '').replace(/\r\n?/g, '\n');
 
-  // 顺序：先处理带标签内容的，最后处理结构类，避免嵌套干扰
+  // 顺序：先处理带标签内容的，最后处理结构类，避免嵌套干扰（> 分隔符先于 : 分隔符，避免 URL 里的 https: 被当成标签分隔）
+  text = text.replace(/\[jumpuri:([^\[\]>]+?)\s*>\s*([^\[\]\s]+)\]/g, (m, label, url) => `${label}（${url}）`);
   text = text.replace(/\[jumpuri:([^\[\]:]+):([^\[\]]+)\]/g, (m, label, url) => `${label}（${url}）`);
   text = text.replace(/\[pixivimage:(\d+)(?:-\d+)?\]/g, (m, id) => `［插图］https://www.pixiv.net/artworks/${id}`);
   text = text.replace(/\[uploadedimage:\d+\]/g, () => '［内嵌插图］');

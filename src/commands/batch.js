@@ -58,7 +58,14 @@ function registerBatchCommands({ reg, scrape, cfg }) {
           skipChapterTitles: cfg().get('indentSkipChapterTitles', false),
           normalizeExisting: cfg().get('indentNormalizeExisting', true),
           chapterPattern: cfg().get('chapterPattern'),
-          onProgress: (file, res) => progress.report({ message: path.basename(file) + ' → ' + (res.changed ? '已整理' : '无改动') }),
+          onProgress: (file, res, done, total) => {
+            const tag = res.needsReview ? '解码存疑跳过' : (res.changed ? '已整理' : '无改动');
+            const prefix = total ? '[' + done + '/' + total + '] ' : '';
+            progress.report({
+              increment: total ? (100 / total) : undefined,
+              message: prefix + path.basename(file) + ' → ' + tag,
+            });
+          },
         })
       );
       return { folder, r };

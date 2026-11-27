@@ -23,6 +23,22 @@ const OLD_COOL18 = () => vscode.workspace.getConfiguration('cool18Novel');
 const trim = (s) => String(s || '').trim();
 const pick = (v, fallback) => (v === undefined || v === null || v === '' ? fallback : v);
 const defaultRoot = (sub) => path.join(os.homedir(), 'Novels', sub);
+const DEFAULT_PROXY = 'http://127.0.0.1:7897';
+
+// 代理配置解析：新项被用户显式设置（包含空串 "" 直连）时直接采纳，否则回退旧配置与默认代理
+function resolveProxy(info, cur, oldCfg, fallbackProxy = DEFAULT_PROXY) {
+  if (info && (info.workspaceFolderValue !== undefined || info.workspaceValue !== undefined || info.globalValue !== undefined)) {
+    return trim(cur);
+  }
+  if (cur !== undefined && cur !== null && cur !== '' && cur !== fallbackProxy) {
+    return trim(cur);
+  }
+  const oldVal = oldCfg.get('proxy');
+  if (oldVal !== undefined && oldVal !== null) {
+    return trim(oldVal);
+  }
+  return cur === '' ? '' : trim(pick(cur, fallbackProxy));
+}
 
 class ScrapeManager {
   constructor(context) {
@@ -128,7 +144,7 @@ class ScrapeManager {
     return new PixivCore({
       outputRoot: this.pixivOutputRoot(),
       cookie: cookie || '',
-      proxy: trim(pick(c.get('pixivProxy'), OLD_PIXIV().get('proxy', 'http://127.0.0.1:7897'))),
+      proxy: resolveProxy(typeof c.inspect === 'function' ? c.inspect('pixivProxy') : null, c.get('pixivProxy'), OLD_PIXIV(), DEFAULT_PROXY),
       intervalMs: pick(c.get('pixivIntervalMs'), OLD_PIXIV().get('intervalMs', 1200)),
       concurrency: pick(c.get('pixivConcurrency'), OLD_PIXIV().get('concurrency', 1)),
       maxRetries: pick(c.get('pixivMaxRetries'), OLD_PIXIV().get('maxRetries', 3)),
@@ -143,12 +159,18 @@ class ScrapeManager {
 
   buildCool18() {
     const c = CFG();
+    const rawDelay = Number(pick(c.get('cool18Delay'), OLD_COOL18().get('delay', 1.0)));
+    const delayMs = Number.isFinite(rawDelay) ? Math.max(0, rawDelay) * 1000 : 1000;
+    const rawMaxPages = Number(pick(c.get('cool18MaxPages'), OLD_COOL18().get('maxPages', 300)));
+    const maxPages = Number.isFinite(rawMaxPages) && rawMaxPages >= 1 ? Math.floor(rawMaxPages) : 300;
+    const rawMaxRetries = Number(c.get('cool18MaxRetries'));
+    const maxRetries = Number.isFinite(rawMaxRetries) && rawMaxRetries >= 1 ? Math.floor(rawMaxRetries) : 4;
     return new Cool18Core({
       outputRoot: this.cool18OutputRoot(),
-      proxy: trim(pick(c.get('cool18Proxy'), OLD_COOL18().get('proxy', 'http://127.0.0.1:7897'))),
-      delayMs: Math.max(0, Number(pick(c.get('cool18Delay'), OLD_COOL18().get('delay', 1.0)))) * 1000,
-      maxPages: Number(pick(c.get('cool18MaxPages'), OLD_COOL18().get('maxPages', 300))) || 300,
-      maxRetries: Number(c.get('cool18MaxRetries')) || 4,
+      proxy: resolveProxy(typeof c.inspect === 'function' ? c.inspect('cool18Proxy') : null, c.get('cool18Proxy'), OLD_COOL18(), DEFAULT_PROXY),
+      delayMs,
+      maxPages,
+      maxRetries,
       cleanAds: c.get('scrapeCleanAds', true) !== false,
       log: (m) => this.log(m),
     });
@@ -171,9 +193,10 @@ class ScrapeManager {
     this.task(true, '正在连接 cool18…');
     let result = null;
     try {
+      const core = this.buildCool18();
       this.log('开始: ' + entries.length + ' 个链接, 模式=' + (deep ? '自动爬全本' : '按列表顺序') +
-        ', 代理=' + (this.buildCool18().proxy || '直连'));
-      result = await this.buildCool18().scrape(entries, {
+        ', 代理=' + (core.proxy || '直连'));
+      result = await core.scrape(entries, {
         deep,
         signal: controller.signal,
         onProgress: (text) => {
@@ -259,11 +282,11 @@ class ScrapeManager {
   // 返回 { saved, failures, aborted, authError } 或 null（msg 里给出未执行原因）
   async executePixiv(targets, reporter, token, { force = false } = {}) {
     if (!targets.length) {
-      reporter.finish(null, '没有识别到 Pixiv 小说/系列/作者链接或 ID');
+      reporter && reporter.finish(null, '没有识别到 Pixiv 小说/系列/作者链接或 ID');
       return { msg: '没有识别到 Pixiv 小说/系列/作者链接或 ID' };
     }
     if (this.active) {
-      reporter.finish(null, '已有抓取任务进行中，请等它完成或先取消');
+      reporter && reporter.finish(null, '已有抓取任务进行中，请等它完成或先取消');
       return { msg: '已有抓取任务进行中，请等它完成或先取消' };
     }
     const controller = new AbortController();
@@ -282,7 +305,7 @@ class ScrapeManager {
         signal: controller.signal,
         onProgress: (d, t, l) => {
           const text = t ? d + '/' + t + ' ' + l : l;
-          reporter.report(text);
+          reporter && reporter.report(text);
           this.task(true, text);
         },
       };
@@ -295,7 +318,9 @@ class ScrapeManager {
               : t.type === 'user'
                 ? (core.clearUser && core.clearUser(t.id))
                 : (core.clearNovel && core.clearNovel(t.id));
-            reporter.report('强制重抓：已准备备份替换 ' + t.type + ':' + t.id + (existed ? ' 的文件' : ' 的目标文件'));
+            const forceMsg = '强制重抓：已准备备份替换 ' + t.type + ':' + t.id + (existed ? ' 的文件' : ' 的目标文件');
+            reporter && reporter.report(forceMsg);
+            this.task(true, forceMsg);
           }
           const r = t.type === 'series'
             ? await core.downloadSeries(t.id, ctx)
@@ -363,12 +388,6 @@ class ScrapeManager {
 
   // 增量更新：返回 { updates, failures, authError } 或 { msg }
   async pixivUpdate(reporter, token) {
-    const ids = Object.keys(this.buildPixivCore('').writer.manifest.series);
-    if (!ids.length) {
-      const msg = 'manifest 里还没有已抓系列记录，先抓一个系列吧';
-      reporter && reporter.finish(null, msg);
-      return { msg };
-    }
     if (this.active) {
       const msg = '已有抓取任务进行中，请等它完成或先取消';
       reporter && reporter.finish(null, msg);
@@ -377,27 +396,33 @@ class ScrapeManager {
     const controller = new AbortController();
     const tokenLink = this.bindToken(token, controller);
     this.active = { label: 'pixiv-update', controller };
-    this.task(true, '正在检查 Pixiv 系列更新…');
     const updates = [];
     const failures = [];
     let authError = false;
+    let emptyManifestMsg = null;
     try {
       const core = this.buildPixivCore(await this.pixivCookie());
-      const ctx = {
-        signal: controller.signal,
-        onProgress: (d, t, l) => {
-          const text = t ? d + '/' + t + ' ' + l : l;
-          reporter && reporter.report(text);
-          this.task(true, text);
-        },
-      };
-      try {
-        const checked = await core.checkUpdates(ctx);
-        updates.push(...(Array.isArray(checked) ? checked : checked.updates));
-        failures.push(...(checked.failures || []));
-      } catch (e) {
-        if (e instanceof PixivError && e.kind === 'auth') authError = true;
-        else failures.push(e.message);
+      const ids = Object.keys(core.writer.manifest.series);
+      if (!ids.length) {
+        emptyManifestMsg = 'manifest 里还没有已抓系列记录，先抓一个系列吧';
+      } else {
+        this.task(true, '正在检查 Pixiv 系列更新…');
+        const ctx = {
+          signal: controller.signal,
+          onProgress: (d, t, l) => {
+            const text = t ? d + '/' + t + ' ' + l : l;
+            reporter && reporter.report(text);
+            this.task(true, text);
+          },
+        };
+        try {
+          const checked = await core.checkUpdates(ctx);
+          updates.push(...(Array.isArray(checked) ? checked : checked.updates));
+          failures.push(...(checked.failures || []));
+        } catch (e) {
+          if (e instanceof PixivError && e.kind === 'auth') authError = true;
+          else failures.push(e.message);
+        }
       }
     } catch (e) {
       // 同 executePixiv：保证任何未预期异常都会走到 reporter.finish
@@ -407,6 +432,10 @@ class ScrapeManager {
     } finally {
       this.active = null;
       this.releaseToken(tokenLink);
+    }
+    if (emptyManifestMsg) {
+      reporter && reporter.finish(null, emptyManifestMsg);
+      return { msg: emptyManifestMsg };
     }
     if (failures.length) this.log('增量更新失败项: ' + failures.join('；'));
     const msg = controller.signal.aborted ? '更新检查已取消，已完成进度已保存'
@@ -440,13 +469,14 @@ class ScrapeManager {
         this.snapshotCache = { key, series, novelCount };
       } else ({ series, novelCount } = this.snapshotCache);
     } catch (e) { this.log('读取 manifest 失败: ' + e.message); }
+    const c = CFG();
     return {
       busy: this.busy,
       taskText: this.taskText,
       cool18Out: this.cool18OutputRoot(),
-      cool18Proxy: trim(pick(CFG().get('cool18Proxy'), OLD_COOL18().get('proxy', 'http://127.0.0.1:7897'))) || '直连',
+      cool18Proxy: resolveProxy(typeof c.inspect === 'function' ? c.inspect('cool18Proxy') : null, c.get('cool18Proxy'), OLD_COOL18(), DEFAULT_PROXY) || '直连',
       pixivOut: this.pixivOutputRoot(),
-      pixivProxy: trim(pick(CFG().get('pixivProxy'), OLD_PIXIV().get('proxy', 'http://127.0.0.1:7897'))) || '直连',
+      pixivProxy: resolveProxy(typeof c.inspect === 'function' ? c.inspect('pixivProxy') : null, c.get('pixivProxy'), OLD_PIXIV(), DEFAULT_PROXY) || '直连',
       series,
       novelCount,
     };
@@ -492,6 +522,7 @@ class ScrapeManager {
     // 不走 shell 字符串拼接（exec 'start'）：目录路径来自可配置项，含引号会破坏拼接甚至注入命令
     // 统一用 explorer.exe 参数数组方式，天然免疫路径中的特殊字符
     const child = spawn('explorer.exe', [dir], { detached: true, stdio: 'ignore' });
+    if (child && typeof child.unref === 'function') child.unref();
     child.on('error', (e2) => {
       this.log('explorer.exe 失败: ' + e2.message + '，改用 openExternal');
       vscode.env.openExternal(vscode.Uri.file(dir)).then(

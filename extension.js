@@ -9,7 +9,7 @@ const { ScrapeManager } = require('./src/service/scrape');
 const { registerNavigationCommands } = require('./src/commands/navigation');
 const { registerOrganizeCommands, disposeOrganize } = require('./src/commands/organize');
 const { isLargeDocument } = require('./src/engine/analysis-worker');
-const { isDocEditor } = require('./src/core/editor');
+const { isDocEditor } = require('./src/core/doc');
 const { registerFileCommands } = require('./src/commands/files');
 const { registerBatchCommands } = require('./src/commands/batch');
 const { registerScrapeCommands } = require('./src/commands/scrape');
@@ -47,6 +47,10 @@ function activate(context) {
     vscode.workspace.onDidOpenTextDocument((d) => checker.checkDocument(d)),
     vscode.workspace.onDidCloseTextDocument((d) => checker.forget(d)),
     vscode.workspace.onDidChangeTextDocument((e) => {
+      if (!e || !e.document) return;
+      const scheme = e.document.uri && e.document.uri.scheme;
+      if (scheme && scheme !== 'file' && scheme !== 'untitled') return;
+      if (Array.isArray(e.contentChanges) && e.contentChanges.length === 0) return;
       // 小文件每次改动立即复查；大文件防抖（行数阈值 8000 ≈ 320KB+ 文本，避免每键全量扫描卡顿）
       if (!isLargeDocument(e.document)) {
         checker.checkDocument(e.document);

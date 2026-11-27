@@ -28,10 +28,10 @@ const { sleep } = require('../async');
 
 // 接受裸 PHPSESSID 值、键值对、或整段 Cookie 头，统一归一成可直接注入的 Cookie 头
 function extractCookie(input) {
-  const s = String(input || '').trim();
+  const s = String(input || '').replace(/[\r\n\x00-\x1f]+/g, ' ').trim();
   if (!s) return '';
   if (!s.includes('=') && /^[\w%\-+.~]+$/.test(s)) return 'PHPSESSID=' + s;
-  const m = s.match(/PHPSESSID=([^;\s]+)/);
+  const m = s.match(/PHPSESSID=([^;\s]+)/i);
   if (m) return 'PHPSESSID=' + m[1];
   return s;
 }
@@ -55,10 +55,14 @@ class Fetcher {
   constructor(opts = {}) {
     this.cookie = extractCookie(opts.cookie);
     this.proxy = opts.proxy || '';
-    this.intervalMs = Math.max(200, Number(opts.intervalMs) || 1200);
-    this.maxRetries = Math.max(0, Number(opts.maxRetries === undefined ? 3 : opts.maxRetries));
-    this.timeoutMs = Number(opts.timeoutMs) || 30000;
-    this.maxConcurrent = Math.max(1, Math.min(3, Number(opts.concurrency) || 1));
+    const rawInterval = Number(opts.intervalMs);
+    this.intervalMs = Number.isFinite(rawInterval) ? Math.max(200, rawInterval) : 1200;
+    const rawRetries = opts.maxRetries === undefined ? 3 : Number(opts.maxRetries);
+    this.maxRetries = Number.isFinite(rawRetries) ? Math.max(0, Math.floor(rawRetries)) : 3;
+    const rawTimeout = Number(opts.timeoutMs);
+    this.timeoutMs = Number.isFinite(rawTimeout) && rawTimeout > 0 ? rawTimeout : 30000;
+    const rawConc = Number(opts.concurrency);
+    this.maxConcurrent = Number.isFinite(rawConc) ? Math.max(1, Math.min(3, Math.floor(rawConc))) : 1;
     this.log = opts.log || (() => {});
     this.signal = null; // 当前任务的 AbortSignal（由 PixivCore 每次任务入口赋值）
     this._lastStart = 0;
@@ -127,6 +131,9 @@ class Fetcher {
         if (this.signal && this.signal.aborted) {
           throw new PixivError('network', '已取消', { url });
         }
+        if (netErr && netErr.isConfigError) {
+          throw new PixivError('network', netErr.message, { url });
+        }
         if (attempt >= this.maxRetries) {
           throw new PixivError('network', `网络失败: ${netErr ? netErr.message : 'HTTP ' + res.status}`, { url });
         }
@@ -168,7 +175,7 @@ class Fetcher {
       const u = new URL(urlStr);
       const req = https.request({
         hostname: u.hostname,
-        port: 443,
+        port: Number(u.port) || 443,
         path: u.pathname + u.search,
         method: 'GET',
         headers: this._headers(),
@@ -183,10 +190,16 @@ class Fetcher {
 
   // 经 HTTP 代理 CONNECT 隧道访问 443
   _viaProxy(urlStr) {
-    const u = new URL(urlStr);
-    const p = parseProxy(this.proxy);
-    const targetHostPort = `${u.hostname}:${Number(u.port) || 443}`;
     return new Promise((resolve, reject) => {
+      let u;
+      let p;
+      try {
+        u = new URL(urlStr);
+        p = parseProxy(this.proxy);
+      } catch (e) {
+        return reject(e);
+      }
+      const targetHostPort = `${u.hostname}:${Number(u.port) || 443}`;
       const tunnel = http.request({
         host: p.host,
         port: p.port,
@@ -227,14 +240,22 @@ class Fetcher {
 
   _consume(res) {
     return new Promise((resolve, reject) => {
+      let settled = false;
+      const done = (fn, val) => {
+        if (settled) return;
+        settled = true;
+        fn(val);
+      };
       const chunks = [];
       let size = 0;
       res.on('data', (c) => {
         size += c.length;
-        if (size > 30 * 1024 * 1024) { res.destroy(); reject(new Error('响应超过 30MB，疑似异常')); return; }
+        if (size > 30 * 1024 * 1024) { res.destroy(); return done(reject, new Error('响应超过 30MB，疑似异常')); }
         chunks.push(c);
       });
+      res.on('aborted', () => done(reject, new Error('响应连接中断')));
       res.on('end', () => {
+        if (res.complete === false) return done(reject, new Error('响应未完整传输'));
         const text = Buffer.concat(chunks).toString('utf8');
         const trimmed = text.trim();
         let json = null;
@@ -242,9 +263,9 @@ class Fetcher {
         if (ct.includes('json') || trimmed.startsWith('{') || trimmed.startsWith('[')) {
           try { json = JSON.parse(trimmed); } catch (e) { json = null; }
         }
-        resolve({ status: res.statusCode, headers: res.headers, text, json });
+        done(resolve, { status: res.statusCode, headers: res.headers, text, json });
       });
-      res.on('error', reject);
+      res.on('error', (err) => done(reject, err));
     });
   }
 }

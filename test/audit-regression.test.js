@@ -536,6 +536,183 @@ async function main() {
   eq(emptyOrgWrites.length, 0, '空文档执行消除空白行不触发无意义写回');
   eq(emptyOrgMsgs[0], '没有空白行可消除', '空文档执行消除空白行提示无空行可消');
 
+  // --- v0.19.2 深度审查与修复回归 ---
+  // 1) AnalysisWorker 旧 worker 异常后异步触发 exit 不误杀新 worker 请求；不可克隆参数不泄漏请求
+  const raceWorker = new AnalysisWorker();
+  try {
+    await raceWorker.run('chapters', { text: '第一章 初始' });
+    const oldW = raceWorker.worker;
+    oldW.emit('error', new Error('旧线程故障'));
+    eq(raceWorker.worker, null, '旧 worker 报错后立即清空引用');
+    const newTask = raceWorker.run('chapters', { text: '第一章 新建' });
+    oldW.emit('exit', 1);
+    eq((await newTask).length, 1, '旧 worker 异步退出不误杀新 worker 正在运行的请求');
+    await assert.rejects(raceWorker.run('chapters', { text: 'a', bad: () => {} }), /could not be cloned|clone/i); pass++;
+    eq(raceWorker.requests.size, 0, 'postMessage 同步抛错后清理 requests 防止内存/ref泄漏');
+  } finally { raceWorker.dispose(); }
+
+  // 2) Pixiv Fetcher 非法 maxRetries 不死循环；parseProxy 拦截非 HTTP 代理并标记配置错误；extractCookie 过滤换行；响应截断检测
+  const { Fetcher: PixivFetcher, extractCookie } = require('../src/engine/pixiv/fetcher');
+  const { parseProxy: parseHttpProxy } = require('../src/engine/proxy');
+  const nanRetryFetcher = new PixivFetcher({ maxRetries: 'invalid', intervalMs: 200 });
+  eq(nanRetryFetcher.maxRetries, 3, 'Pixiv Fetcher 非法 maxRetries 回退默认 3（不陷入死循环）');
+  let socksErr = null;
+  try { parseHttpProxy('socks5://127.0.0.1:1080'); } catch (e) { socksErr = e; }
+  eq(!!(socksErr && socksErr.isConfigError), true, 'parseProxy 拒绝非 HTTP 代理协议并标记配置错误');
+  let cfgCallCount = 0;
+  const cfgFetcher = new PixivFetcher({ proxy: 'http://127.0.0.1:7897', maxRetries: 3, intervalMs: 200 });
+  cfgFetcher._pace = async () => {};
+  cfgFetcher._request = async () => { cfgCallCount++; throw Object.assign(new Error('仅支持 HTTP 代理协议'), { isConfigError: true }); };
+  await assert.rejects(cfgFetcher.getJson('https://www.pixiv.net/ajax/novel/1'), /仅支持 HTTP 代理协议/); pass++;
+  eq(cfgCallCount, 1, '代理配置错误立即终止不重试');
+  eq(cfgFetcher._useProxy, true, '代理配置错误不静默翻转直连');
+  eq(extractCookie('other=1;\r\nphpsessid=AbCdEf_123456; x=2'), 'PHPSESSID=AbCdEf_123456', 'extractCookie 剔除换行并支持小写 phpsessid');
+
+  const truncHttps = { request: (_opts, cb) => {
+    const req = new EventEmitter(); req.destroy = err => req.emit('error', err);
+    req.end = () => queueMicrotask(() => {
+      const res = new EventEmitter(); res.statusCode = 200; res.headers = {}; res.complete = false; res.resume = () => {};
+      cb(res); res.emit('data', Buffer.from('partial')); res.emit('end');
+    });
+    return req;
+  } };
+  const truncC18 = load('src/engine/cool18/fetcher.js', { https: truncHttps, '../async': { sleep: async () => {} } });
+  await assert.rejects(truncC18.fetchPage('https://example.invalid/trunc', { retries: 1 }), /未完整传输/); pass++;
+
+  // 3) 面板 cool18Grab 尊重 deep=false；onTask 存在时不重复推送；pixivGrab 空输入提示
+  const panelCalls = [], panelPosts = [], panelTasks = [];
+  const pVs = {
+    window: { createStatusBarItem: () => ({ show() {}, hide() {} }), activeTextEditor: undefined },
+    workspace: { getConfiguration: () => ({ get: (_k, d) => d }) },
+    commands: { executeCommand() {} },
+    StatusBarAlignment: { Right: 1 },
+  };
+  const { PanelManager: TestPanel } = load('src/ui/panel.js', { vscode: pVs });
+  const mockScrape = {
+    busy: false, taskText: '',
+    onTask: (r, t) => panelTasks.push({ r, t }),
+    snapshot: () => ({ busy: false, taskText: '', cool18Out: '', cool18Proxy: '', pixivOut: '', pixivProxy: '', series: [], novelCount: 0 }),
+    pixivCookie: async () => '',
+    async cool18(entries, opts) { panelCalls.push({ entries, deep: opts.deep }); opts.reporter.report('1/1 进度'); opts.reporter.finish({ count: 1 }, '完成'); },
+    async executePixiv() {},
+  };
+  const tp = new TestPanel({ subscriptions: [], extension: { id: 'localtools.novel-toolkit' } }, { appliesTo: () => false }, mockScrape);
+  tp.panel = { webview: { postMessage: (m) => panelPosts.push(m) } };
+  await tp.handle({ command: 'cool18Grab', deep: false, text: '123456' });
+  eq(panelCalls[0].deep, false, '单链接点按列表批量时尊重 deep=false');
+  eq(panelPosts.filter(m => m.type === 'task').length, 0, 'scrape.onTask 挂载时面板 reporter 不重复推送 task');
+  await tp.handle({ command: 'pixivGrab', text: '无链接文本' });
+  eq(panelPosts.some(m => m.type === 'task' && /没有识别到 Pixiv/.test(m.text)), true, 'pixivGrab 空输入明确提示');
+
+  // 4) cool18 buildMergedName 取 key[4]；decodePage Big5 解码；bodyToText 不误切 <pre>
+  const { buildMergedName: c18MergedName } = require('../src/engine/cool18/core');
+  eq(c18MergedName([
+    { key: [0, 1, 0, 1, 10], cover: { vol: 0, a: 1, b: 1, part: 0 }, t: { title: '【测试书】(1-10)', author: '甲' } },
+    { key: [0, 11, 0, 2, 20], cover: { vol: 0, a: 11, b: 11, part: 0 }, t: { title: '【测试书】(11-20)', author: '甲' } },
+  ]), '测试书【1-20】作者：甲.txt', 'cool18 合并文件名使用区间终点 key[4]');
+  const big5Sample = Buffer.from([0xB3,0x6F,0xBB,0xA1,0xB7,0x7C,0xAD,0xCC,0xB9,0xEF,0xAE,0xC9,0xA8,0xD3,0xB5,0x6F,0xB6,0x7D,0xB0,0xDD,0xC3,0x44]);
+  eq(c18Parse.decodePage(big5Sample), '這說會們對時來發開問題', 'cool18 decodePage 准确解码无 meta 的 Big5 页面');
+  eq(c18Parse.decodePage(Buffer.concat([Buffer.from('<meta charset="big5">'), big5Sample])).includes('這說會們'), true, 'cool18 decodePage 尊重 meta charset=big5');
+  eq(c18Parse.bodyToText('<pre>　　第一段。</pre>'), '　　第一段。', 'cool18 bodyToText 不把 <pre> 误匹配为 <p>');
+
+  // 5) renameFile 省略扩展名但主干同名时静默跳过；ScrapeManager 显式空串代理直连
+  let renameAttempted = false, renameErrs = [];
+  const sameStemCmds = {};
+  load('src/commands/files.js', {
+    vscode: { Uri: { file: p => ({ fsPath: p }) }, window: { showInputBox: async () => 'a', showErrorMessage: e => renameErrs.push(e) }, workspace: { fs: { rename: async () => { renameAttempted = true; } } } },
+    '../core/editor': {},
+  }).registerFileCommands({ reg: (n, f) => { sameStemCmds[n] = f; }, panel: { editor: () => ({ document: { uri: { scheme: 'file', fsPath: path.join(root, 'a.txt') } } }) }, checker: {} });
+  await sameStemCmds.renameFile();
+  eq([renameAttempted, renameErrs.length], [false, 0], 'renameFile 省略扩展名且主干未变时静默跳过不报错');
+
+  const directProxyVs = {
+    window: { createOutputChannel: () => ({ appendLine() {}, dispose() {} }), showInformationMessage() {} },
+    workspace: { getConfiguration: (ns) => ns === 'novelToolkit'
+      ? ({ inspect: (k) => (k === 'cool18Proxy' ? { globalValue: '' } : undefined), get: (k, d) => (k === 'cool18Proxy' ? '' : d) })
+      : ({ get: (_k, d) => d }) },
+  };
+  const { ScrapeManager: DirectMgr } = load('src/service/scrape.js', { vscode: directProxyVs });
+  const dm = new DirectMgr({ subscriptions: [], globalState: { get: () => [], update() {} } });
+  eq(dm.buildCool18().proxy, '', '新配置显式清空 cool18Proxy 时直接直连');
+  eq(dm.snapshot().cool18Proxy, '直连', 'snapshot 同步展示直连');
+  eq(dm.snapshot().pixivProxy, 'http://127.0.0.1:7897', '未显式设置的代理仍回退默认');
+
+  // 6) Pixiv 旧版无 dir manifest 中途取消续传保留旧路径定位；Writer.safePath 大小写容错；render [jumpuri:标题 > URL]
+  const legResumeRoot = folder('pixiv-legacy-resume');
+  const legDir = path.join(legResumeRoot, '旧作者', '旧系列');
+  const legF1 = path.join(legDir, '001 第一章.txt');
+  const legF2 = path.join(legDir, '002 第二章.txt');
+  fs.mkdirSync(legDir, { recursive: true });
+  fs.writeFileSync(legF1, '第一章\r\n\r\n旧正文一。\r\n');
+  fs.writeFileSync(legF2, '第二章\r\n\r\n旧正文二。\r\n');
+  fs.writeFileSync(path.join(legResumeRoot, 'pixiv-manifest.json'), JSON.stringify({
+    novels: {},
+    series: { '88': { title: '旧系列', author: '旧作者', userId: '8', files: [{ id: '881', title: '第一章', order: 1 }, { id: '882', title: '第二章', order: 2 }] } },
+  }));
+  const legAbort = new AbortController();
+  const legCore = new PixivCore({ outputRoot: legResumeRoot, saveUrlNote: false });
+  legCore.api.seriesAll = async () => ({ meta: { id: '88', title: '新系列', userName: '新作者', userId: '8', publishedContentCount: 2 }, chapters: [{ id: '881', order: 1 }, { id: '882', order: 2 }] });
+  legCore.api.novel = async () => { throw new Error('已有旧文件不应重抓'); };
+  legAbort.abort();
+  await legCore.downloadSeries('88', { signal: legAbort.signal });
+  const legReloaded = new PixivCore({ outputRoot: legResumeRoot, saveUrlNote: false });
+  legReloaded.api.seriesAll = legCore.api.seriesAll;
+  legReloaded.api.novel = legCore.api.novel;
+  const legAfter = await legReloaded.downloadSeries('88');
+  eq(legAfter.skipped, 2, '旧版 manifest 中途取消后再续传不丢失剩余旧章路径');
+
+  if (process.platform === 'win32') {
+    const winRoot = folder('win-case');
+    const swappedRoot = /^[A-Z]:/.test(winRoot) ? winRoot[0].toLowerCase() + winRoot.slice(1) : winRoot[0].toUpperCase() + winRoot.slice(1);
+    const winWriter = new Writer({ outputRoot: swappedRoot });
+    eq(path.basename(winWriter.safePath(path.join(winRoot, 'sub.txt'))), 'sub.txt', 'Windows safePath 兼容盘符大小写');
+  }
+  const { renderContent: pixivRender } = require('../src/engine/pixiv/render');
+  eq(pixivRender('点[jumpuri:外部链接 > https://example.com]查看').text, '点外部链接（https://example.com）查看', 'Pixiv render 支持 > 分隔符 jumpuri');
+
+  // 7) chapters 部编号、括号紧贴标题、卷+章空格豁免、t2s 写回失败不输出清单、walkTxt 权限错误容错、jumpToLine 精确列
+  eq(chapters.chapterNumber('第二部 远行'), 2, 'chapterNumber 支持“第X部”');
+  eq(chapters.buildChapterRegex().test('【第一章一二三四五六】'), true, '严格正则允许 6 字紧贴右括号标题');
+  eq(transforms.scanLines(['第一卷 第一章 起风了']).mid, [], '带卷前缀的章节行不误报正文空格');
+
+  let t2sChannelUsed = false;
+  const failT2sCmds = {};
+  load('src/commands/organize.js', {
+    vscode: { window: { showInformationMessage() {}, createOutputChannel: () => { t2sChannelUsed = true; return { clear() {}, appendLine() {}, show() {} }; } } },
+    '../core/editor': { docLines: () => ['繁體字'], applyLines: async () => false, noDoc() {} },
+  }).registerOrganizeCommands({ reg: (n, f) => { failT2sCmds[n] = f; }, panel: { editor: () => ({ document: {} }) }, checker: {}, cfg: () => ({ get: (_k, d) => d }) });
+  await failT2sCmds.t2sFile();
+  eq(t2sChannelUsed, false, 't2sFile applyLines 写回失败时不输出假转换清单');
+
+  const permRoot = folder('batch-perm');
+  const permOk = path.join(permRoot, 'ok.txt');
+  const permDeniedDir = path.join(permRoot, 'denied');
+  fs.writeFileSync(permOk, '　　正常。\r\n');
+  fs.mkdirSync(permDeniedDir);
+  const permFs = { ...fs, readdirSync: (p) => { if (path.resolve(p) === path.resolve(permDeniedDir)) throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); return fs.readdirSync(p); } };
+  const { BatchProcessor: PermBatch } = load('src/service/batch.js', { fs: permFs });
+  const permRes = await new PermBatch().processFolder(permRoot);
+  eq([permRes.total, permRes.errors.length], [1, 1], 'walkTxt 子目录无权限时记录错误并继续处理其余文件');
+
+  let jumpedSel = null;
+  const { jumpToLine } = load('src/core/editor.js', {
+    vscode: {
+      EndOfLine: { CRLF: 2, LF: 1 },
+      Position: function (l, c) { this.line = l; this.character = c; },
+      Range: function (a, b) { this.start = a; this.end = b; },
+      Selection: function (a, b) { this.anchor = a; this.active = b; },
+      TextEditorRevealType: { InCenterIfOutsideViewport: 2 },
+      window: { setStatusBarMessage() {} },
+    },
+  });
+  const fakeEd = {
+    document: { lineAt: () => ({ text: '你好 世界', firstNonWhitespaceCharacterIndex: 0 }) },
+    revealRange() {},
+    set selection(s) { jumpedSel = s; },
+  };
+  jumpToLine(fakeEd, [0], 0, '空白');
+  eq([jumpedSel.anchor.character, jumpedSel.active.character], [2, 3], 'jumpToLine 精确选中正文汉字间空格列范围');
+
   console.log('===== 审查回归：通过 ' + pass + '，失败 0 =====');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

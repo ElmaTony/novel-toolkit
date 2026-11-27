@@ -101,6 +101,9 @@ ok('HTML 注入脚本与 panel-script 模块一致', !!m && m[1].trim() === webv
     click({ source: 'cool18' });
     ok('来源: 整理/抓取和来源独立切换', elements['tab-organize'].hidden && !elements['source-cool18'].hidden && elements['source-pixiv'].hidden);
     elements.forceGrab.checked = true;
+    // 校验失败仅返回 task(running:false)（未真实启动任务），不应误清 forceGrab 复选框
+    listeners.message({ data: { type: 'task', running: false, text: '没有识别到 Pixiv 小说/系列/作者链接或 ID' } });
+    ok('校验失败: 未启动的任务不会误清强制重抓复选框', elements.forceGrab.checked === true);
     click({ host: 'pixivGrabFile' });
     ok('强制重抓: 当前文件链接也传递复选框', api.posts.some((p) => p.command === 'pixivGrabFile' && p.force === true));
     listeners.message({ data: { type: 'task', running: true, text: '4/8 正在保存' } });

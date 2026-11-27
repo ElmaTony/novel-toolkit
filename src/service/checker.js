@@ -36,9 +36,14 @@ class Checker {
 
   fullScan(doc) {
     if (!this.appliesTo(doc)) {
-      this.diags.delete(doc.uri);
-      this.silenced.delete(doc.uri.toString());
-      this.notify();
+      const key = doc.uri.toString();
+      const hadDiag = (this.diags.get(doc.uri) || []).length > 0;
+      const wasSilenced = this.silenced.delete(key);
+      if (hadDiag) this.diags.delete(doc.uri);
+      const scheme = doc.uri && doc.uri.scheme;
+      if (hadDiag || wasSilenced || !scheme || scheme === 'file' || scheme === 'untitled') {
+        this.notify();
+      }
       return undefined;
     }
     this.silenced.delete(doc.uri.toString());
@@ -53,30 +58,39 @@ class Checker {
     const signature = JSON.stringify(options);
     const cached = this.scanCache.get(doc);
     const version = doc.version;
-    const publish = (lines, r) => {
+    const publish = (r) => {
       if (this.disposed || doc.isClosed || doc.version !== version || !this.appliesTo(doc)) return;
-      this.scanCache.set(doc, { version, signature, lines, result: r });
-      return this.publish(doc, lines, r);
+      if (version !== undefined) this.scanCache.set(doc, { version, signature, result: r });
+      return this.publish(doc, r);
     };
-    if (cached && version !== undefined && cached.version === version && cached.signature === signature) return publish(cached.lines, cached.result);
+    if (cached && version !== undefined && cached.version === version && cached.signature === signature) return publish(cached.result);
     if (!isLargeDocument(doc)) {
       const lines = [];
       for (let i = 0; i < doc.lineCount; i++) lines.push(doc.lineAt(i).text);
-      return publish(lines, transforms.scanLines(lines, options));
+      return publish(transforms.scanLines(lines, options));
+    }
+    const existingJob = this.scanJobs.get(doc);
+    const epoch = this.scanEpoch;
+    if (existingJob && version !== undefined && existingJob.version === version && existingJob.signature === signature && existingJob.epoch === epoch) {
+      return existingJob.promise;
     }
     const text = typeof doc.getText === 'function'
       ? doc.getText()
       : Array.from({ length: doc.lineCount }, (_, i) => doc.lineAt(i).text).join('\n');
-    const job = {};
-    const epoch = this.scanEpoch;
+    const job = { version, signature, epoch, promise: null };
     this.scanJobs.set(doc, job);
-    return this.analysis.run('scan', { text, options }).then(result => {
-      if (this.scanEpoch !== epoch || this.scanJobs.get(doc) !== job || this.silenced.has(doc.uri.toString())) return;
-      return publish(null, result);
+    job.promise = this.analysis.run('scan', { text, options }).then(result => {
+      if (this.scanJobs.get(doc) === job) this.scanJobs.delete(doc);
+      if (this.scanEpoch !== epoch || this.silenced.has(doc.uri.toString())) return;
+      return publish(result);
+    }, err => {
+      if (this.scanJobs.get(doc) === job) this.scanJobs.delete(doc);
+      throw err;
     });
+    return job.promise;
   }
 
-  publish(doc, lines, r) {
+  publish(doc, r) {
     const list = [];
     for (const w of r.ws) {
       const d = new vscode.Diagnostic(
@@ -109,7 +123,7 @@ class Checker {
       list.push(d);
     }
     for (const q of r.quote) {
-      const len = lines ? lines[q.line].length : doc.lineAt(q.line).text.length;
+      const len = q.line < doc.lineCount ? doc.lineAt(q.line).text.length : 0;
       const d = new vscode.Diagnostic(
         new vscode.Range(q.line, 0, q.line, len),
         '第 ' + (q.line + 1) + ' 行引号疑似不配对（' + q.problems + '），请检查处理',

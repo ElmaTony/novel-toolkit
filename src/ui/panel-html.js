@@ -300,7 +300,7 @@ function buildPanelHtml() {
   <main class="main">
     <section id="tab-organize" class="page page-organize" role="tabpanel" aria-labelledby="organizeTab">
       <div class="org-side">
-        <div class="docbar">${icon('file')}<button type="button" class="file-name" id="fileName" data-doc data-host="renameFile" title="重命名当前文件">正在读取文件…</button><span class="file-status" id="fileStatus"></span></div>
+        <div class="docbar">${icon('file')}<button type="button" class="file-name" id="fileName" data-doc data-host="renameFile" title="重命名当前文件"><span id="fileNameText">正在读取文件…</span>${icon('pencil')}</button><span class="file-status" id="fileStatus"></span></div>
         <div class="section">
           <div class="section-head"><h2 class="section-title">校对</h2><span class="spacer"></span><button type="button" class="ghost check-btn" id="checkBtn" data-doc data-run="check" title="立即检查全文（Alt+F8）">${icon('scan')}检查全文</button></div>
           <div class="checks" aria-label="检查结果">

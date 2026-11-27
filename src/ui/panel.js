@@ -7,12 +7,7 @@ const { parseEntries: parseCool18Entries } = require('../engine/cool18/parse');
 const { parseInput: parsePixivInput } = require('../engine/pixiv/parseInput');
 const { RUNNABLE, HOST_COMMANDS } = require('./messages');
 const { AnalysisWorker, isLargeDocument } = require('../engine/analysis-worker');
-
-function isDocEditor(editor) {
-  if (!editor || !editor.document || editor.document.isClosed) return false;
-  const scheme = editor.document.uri && editor.document.uri.scheme;
-  return !scheme || scheme === 'file' || scheme === 'untitled';
-}
+const { isDocEditor } = require('../core/doc');
 
 // RUNNABLE / HOST_COMMANDS 集中定义在 ./messages
 
@@ -74,7 +69,13 @@ class PanelManager {
     this.panel.onDidDispose(() => {
       this.panel = null;
     }, null, this.context.subscriptions);
-    this.panel.webview.onDidReceiveMessage((msg) => this.handle(msg));
+    this.panel.webview.onDidReceiveMessage((msg) => {
+      Promise.resolve(this.handle(msg)).catch((error) => {
+        const message = (error && error.message) || String(error);
+        if (this.scrape && this.scrape.log) this.scrape.log('面板消息处理失败: ' + message);
+        this.postNotice('操作失败：' + message);
+      });
+    });
     this.update().catch(error => this.scrape.log('面板更新失败: ' + error.message));
     this.postScrapeState();
   }
@@ -125,6 +126,14 @@ class PanelManager {
     });
   }
 
+  _panelReporter() {
+    const syncedByOnTask = this.scrape && typeof this.scrape.onTask === 'function';
+    return {
+      report: (t) => { if (!syncedByOnTask) this.postTask(true, t); },
+      finish: (res, m) => { if (!syncedByOnTask || !res) this.postNotice(m || ''); },
+    };
+  }
+
   async handle(msg) {
     if (!msg || typeof msg.command !== 'string') {
       return;
@@ -146,7 +155,8 @@ class PanelManager {
       return;
     }
     if (msg.command === 'openSettings') {
-      vscode.commands.executeCommand('workbench.action.openSettings', '@ext:localtools.novel-toolkit');
+      const extId = (this.context && this.context.extension && this.context.extension.id) || 'localtools.novel-toolkit';
+      vscode.commands.executeCommand('workbench.action.openSettings', '@ext:' + extId);
       return;
     }
     if (msg.command === 'scrapePreview') {
@@ -182,11 +192,8 @@ class PanelManager {
         return;
       }
       await this.scrape.cool18(entries, {
-        deep: !!msg.deep || entries.length === 1,
-        reporter: {
-          report: (t) => this.postTask(true, t),
-          finish: (_r, m) => this.postNotice(m || ''),
-        },
+        deep: typeof msg.deep === 'boolean' ? msg.deep : entries.length === 1,
+        reporter: this._panelReporter(),
       });
       this.postScrapeState();
       return;
@@ -209,10 +216,7 @@ class PanelManager {
       }
       await this.scrape.cool18(entries, {
         deep: false,
-        reporter: {
-          report: (t) => this.postTask(true, t),
-          finish: (_r, m) => this.postNotice(m || ''),
-        },
+        reporter: this._panelReporter(),
       });
       this.postScrapeState();
       return;
@@ -223,11 +227,11 @@ class PanelManager {
         this.postNotice('已有抓取任务进行中，请等它完成或先取消');
         return;
       }
-      const reporter = {
-        report: (t) => this.postTask(true, t),
-        finish: (_r, m) => this.postNotice(m || ''),
-      };
-      const r = await this.scrape.executePixiv(targets, reporter, undefined, { force: !!msg.force });
+      if (!targets.length) {
+        this.postNotice('没有识别到 Pixiv 小说/系列/作者链接或 ID');
+        return;
+      }
+      const r = await this.scrape.executePixiv(targets, this._panelReporter(), undefined, { force: !!msg.force });
       if (r && r.authError) {
         this.postNotice('Cookie 缺失或已失效 —— 点「管理 Cookie」设置后重试');
         vscode.commands.executeCommand('novelToolkit.pixivSetCookie');
@@ -247,11 +251,11 @@ class PanelManager {
         this.postNotice('已有抓取任务进行中，请等它完成或先取消');
         return;
       }
-      const reporter = {
-        report: (t) => this.postTask(true, t),
-        finish: (_r, m) => this.postNotice(m || ''),
-      };
-      const r = await this.scrape.executePixiv(targets, reporter, undefined, { force: !!msg.force });
+      if (!targets.length) {
+        this.postNotice('当前文件里没有识别到 Pixiv 小说/系列/作者链接或 ID');
+        return;
+      }
+      const r = await this.scrape.executePixiv(targets, this._panelReporter(), undefined, { force: !!msg.force });
       if (r && r.authError) {
         this.postNotice('Cookie 缺失或已失效 —— 点「管理 Cookie」设置后重试');
         vscode.commands.executeCommand('novelToolkit.pixivSetCookie');

@@ -73,14 +73,17 @@ class PixivCore {
     const r = this.writer.saveText(file, rendered.text, { overwrite: this.forceNovels.has(String(novelId)), backup: true });
     this.forceNovels.delete(String(novelId));
     this.writer.writeUrlNote(path.dirname(file), novelUrl(novel.id), novel.title);
-    this.writer.writeMeta(file, metaOf(novel, 0, null));
+    const prevRecord = this.writer.manifest.novels[novel.id];
+    if (!r.skipped) {
+      this.writer.writeMeta(file, metaOf(novel, 0, null));
+    }
     this.writer.manifest.novels[novel.id] = {
       title: novel.title,
       author: novel.userName,
       userId: novel.userId,
       file: this.writer.relative(file),
       seriesNav: novel.seriesNav,
-      fetchedAt: new Date().toISOString(),
+      fetchedAt: (r.skipped && prevRecord && prevRecord.fetchedAt) ? prevRecord.fetchedAt : new Date().toISOString(),
     };
     this.writer.saveManifest();
     if (rendered.unknown.length) this.log(`未识别标记(${novel.id}): ${rendered.unknown.join(' ')}`);
@@ -136,6 +139,18 @@ class PixivCore {
     const legacyAuthor = entry.author;
     const legacyTitle = entry.title;
     const ambiguousLegacy = legacy && Object.entries(this.writer.manifest.series).some(([id, other]) => id !== String(seriesId) && other.author === legacyAuthor && other.title === legacyTitle);
+    // 在覆盖 entry.dir 前，先把旧版记录缺失的相对路径回填好，防止中途取消续传时丢失旧路径定位
+    if (legacy && !ambiguousLegacy) {
+      for (const f of entry.files || []) {
+        if (f && !f.file) {
+          try {
+            const ord = f.order || 1;
+            const lp = this.writer.legacyChapterPath(legacyAuthor, entry.userId, legacyTitle, ord, f.title || '第' + ord + '话');
+            f.file = this.writer.relative(lp);
+          } catch (_) { /* ignore invalid legacy path */ }
+        }
+      }
+    }
     entry.dir = this.writer.relative(dir);
     entry.title = meta.title;
     entry.author = meta.userName;

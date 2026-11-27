@@ -15,7 +15,7 @@ const NUM_CHARS = '〇零一二三四五六七八九十百千万两廿卅卌0-9�
 //   - 空格分隔的标题放宽到 40 字，允许 ！？…（章节标题常见），但仍禁止 。；
 //   - 无空格紧贴标题保留 6 字上限，避免把正文句子当成章节名；
 //   - 6 字以上的无空格标题由 chapterEntries 的上下文候选逻辑兜底。
-const TITLE_TAIL = '(?:[ \\t\\u3000]+[^。；\\n]{0,40}|[^。；\\n\\s]{0,6}(?![^。；\\s]))?';
+const TITLE_TAIL = '(?:[ \\t\\u3000]+[^。；\\n]{0,40}|[^。；\\n\\s]{0,6}(?![^。；\\s\\]】）)]))?';
 const DEFAULT_CHAPTER_PATTERN = '^\\s*(?:[\\[【（(]\\s*)?(?:'
   + '第\\s*[' + NUM_CHARS + ']{1,9}\\s*[章节卷回部集话]' + TITLE_TAIL
   + '|卷[' + NUM_CHARS + ']{1,9}' + TITLE_TAIL
@@ -76,11 +76,24 @@ function buildChapterRegex(pattern) {
   if (re) {
     return re;
   }
+  let invalid = false;
   try {
     re = new RegExp(key || DEFAULT_CHAPTER_PATTERN);
   } catch (e) {
-    _invalidPatterns.add(key);
+    invalid = true;
     re = new RegExp(DEFAULT_CHAPTER_PATTERN);
+  }
+  if (_regexCache.size >= 64) {
+    const oldest = _regexCache.keys().next().value;
+    if (oldest !== undefined) {
+      _regexCache.delete(oldest);
+      _invalidPatterns.delete(oldest);
+    }
+  }
+  if (invalid) {
+    _invalidPatterns.add(key);
+  } else {
+    _invalidPatterns.delete(key);
   }
   _regexCache.set(key, re);
   return re;
@@ -212,7 +225,7 @@ const FW_DIG_MAP = { '０': '0', '１': '1', '２': '2', '３': '3', '４': '4',
 
 // 从章节行提取编号: 第12章→12, 第十二章→12, 第一千零二十四章→1024; 序章/番外→null
 function chapterNumber(title) {
-  const m = String(title || '').match(/第\s*([0-9０-９〇零一二三四五六七八九十百千万两廿卅卌]+)\s*[章节回集话]/);
+  const m = String(title || '').match(/第\s*([0-9０-９〇零一二三四五六七八九十百千万两廿卅卌]+)\s*[章节回部集话]/);
   if (!m) { const english = String(title || '').match(/\bchapter\s*(\d+)/i); return english ? Number(english[1]) : null; }
   const raw = m[1].replace(/[０-９]/g, (c) => FW_DIG_MAP[c]);
   if (/^\d+$/.test(raw)) { return Number(raw); }

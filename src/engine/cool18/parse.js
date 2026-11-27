@@ -13,6 +13,7 @@ const PARA = '\x00'; // 强段落哨兵: <p></p> 与空行
 const WRAP = '\x01'; // 待判定换行哨兵: <br> 与源文本换行（是段落边界还是硬换行由段首缩进判定）
 const BBS4 = 'https://www.cool18.com/bbs4/index.php?app=forum&act=threadview&tid=';
 const { splitInlineBreaks } = require('../transforms');
+const { decodeToUtf8 } = require('../encoding');
 
 const FW_MAP = {
   '０': '0', '１': '1', '２': '2', '３': '3', '４': '4',
@@ -31,14 +32,20 @@ const NAMED_ENTITIES = {
   frac12: '½', sup2: '²', sup3: '³', micro: 'µ', dagger: '†'
 };
 
+function isUnsafeCtrlCode(code) {
+  return code === 0 || (code > 0 && code < 32 && code !== 9 && code !== 10 && code !== 13);
+}
+
 function unescapeEntities(s) {
   return String(s || '')
     .replace(/&#x([0-9a-fA-F]+);/g, (m, h) => {
       const code = parseInt(h, 16);
+      if (isUnsafeCtrlCode(code)) return '';
       try { return String.fromCodePoint(code); } catch (e) { return m; }
     })
     .replace(/&#(\d+);/g, (m, d) => {
       const code = parseInt(d, 10);
+      if (isUnsafeCtrlCode(code)) return '';
       try { return String.fromCodePoint(code); } catch (e) { return m; }
     })
     .replace(/&([a-zA-Z][a-zA-Z0-9]{1,10});/g, (m, name) =>
@@ -46,17 +53,29 @@ function unescapeEntities(s) {
 }
 
 function cleanText(s) {
-  return unescapeEntities(String(s || '').replace(/<[^>]+>/g, '')).trim();
+  return unescapeEntities(String(s || '').replace(/<\/?[a-zA-Z!/][^>]*>/g, '')).trim();
 }
 
-// 字节流 → 文本: utf-8 严格 → gb18030 → big5 → utf-8 替换模式
+// 字节流 → 文本: 严格 UTF-8 → HTML meta charset → 双字节特征字评分（准确区分 Big5 与 GB18030）
 function decodePage(buf) {
-  for (const enc of ['utf-8', 'gb18030', 'big5']) {
+  if (!buf || !buf.length) return '';
+  if (!buf.includes(0)) {
     try {
-      return new TextDecoder(enc, { fatal: true }).decode(buf);
-    } catch (e) { /* try next encoding */ }
+      return new TextDecoder('utf-8', { fatal: true }).decode(buf);
+    } catch (e) { /* try meta charset / double-byte */ }
   }
-  return new TextDecoder('utf-8').decode(buf);
+  const head = buf.subarray(0, Math.min(buf.length, 4096)).toString('latin1');
+  const cm = head.match(/<meta[^>]+charset\s*=\s*["']?\s*([a-zA-Z0-9_-]+)/i);
+  if (cm) {
+    const cs = cm[1].toLowerCase();
+    const mapped = (cs === 'big5' || cs === 'big5-hkscs') ? 'big5'
+      : (cs === 'gbk' || cs === 'gb2312' || cs === 'gb18030') ? 'gb18030'
+      : '';
+    if (mapped) {
+      try { return new TextDecoder(mapped).decode(buf); } catch (e) { /* fallback below */ }
+    }
+  }
+  return decodeToUtf8(buf).text;
 }
 
 const ANCHOR_RE = /<a\b[^>]*?\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a>/gi;
@@ -165,14 +184,15 @@ function stripAdLines(text, onRemove) {
 //   完全没有"　　"且无 <p> 的源 → 退回旧行为（逐行保留）
 function bodyToText(bodyHtml, opts = {}) {
   let html = String(bodyHtml)
+    .replace(/[\x00\x01]/g, '')
     .replace(/<B>\s*<font[^>]*>\s*/gi, '')
     .replace(/<\/font[^>]*>\s*<\/B>/gi, '')
     .replace(ANCHOR_RE, (full, h1, h2, h3) => (/tid=\d+/i.test(unescapeEntities(h1 || h2 || h3 || '')) ? '' : full));
 
-  const hasParaTags = /<p(>| )/i.test(html);
+  const hasParaTags = /<p(?:\s|>|\/)/i.test(html);
 
-  html = html.replace(/<\/?p[^>]*>/gi, PARA).replace(/<br\s*\/?>/gi, WRAP);
-  const text = unescapeEntities(html.replace(/<[^>]+>/g, '')).replace(/\r/g, '').replace(/\n/g, WRAP);
+  html = html.replace(/<\/?p(?:\s[^>]*)?>/gi, PARA).replace(/<br\s*\/?>/gi, WRAP);
+  const text = unescapeEntities(html.replace(/<\/?[a-zA-Z!/][^>]*>/g, '')).replace(/\r/g, '').replace(/\n/g, WRAP);
 
   // 缩进/接缝标记: 全角缩进或 2+ 半角空格接缝都算
   const hasMarkers = /\u3000{2,}/.test(text) || /[ \u00a0]{2,}/.test(text);

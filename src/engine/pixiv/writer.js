@@ -12,9 +12,18 @@ function sanitizeName(name, maxLen = 80) {
 const toCRLF = text => String(text).replace(/\r?\n/g, '\r\n');
 const crypto = require('crypto');
 const LINK_FALLBACK_CODES = new Set(['EPERM', 'ENOTSUP', 'EXDEV', 'EACCES', 'ENOSYS']);
+const samePath = (a, b) => (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
 function isSymlink(target) {
   try { return fs.lstatSync(target).isSymbolicLink(); }
   catch (e) { if (e.code === 'ENOENT') return false; throw e; }
+}
+function renameOverwrite(tmp, file) {
+  try {
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    if (process.platform !== 'win32' || (e.code !== 'EPERM' && e.code !== 'EACCES')) throw e;
+    fs.copyFileSync(tmp, file);
+  }
 }
 function writeFileAtomic(file, text, { overwrite = true } = {}) {
   const payload = toCRLF(text);
@@ -23,7 +32,7 @@ function writeFileAtomic(file, text, { overwrite = true } = {}) {
   try {
     fs.writeFileSync(tmp, payload, { encoding: 'utf8', flag: 'wx' });
     // 硬链接发布为一次原子新建；不支持硬链接的文件系统/环境降级为独占新建，同样不覆盖竞争写入者。
-    if (overwrite) fs.renameSync(tmp, file);
+    if (overwrite) renameOverwrite(tmp, file);
     else {
       try { fs.linkSync(tmp, file); }
       catch (e) {
@@ -62,7 +71,7 @@ class Writer {
     let current = full;
     for (;;) {
       if (isSymlink(current)) throw new Error('输出路径包含符号链接或目录联接');
-      if (current === this.outputRoot) break;
+      if (samePath(current, this.outputRoot)) break;
       const parent = path.dirname(current);
       if (parent === current) break;
       current = parent;
@@ -90,7 +99,7 @@ class Writer {
     this.ensureDir(this.outputRoot);
     this.safePath(this.manifestPath);
     if (this.corruptManifest && fs.existsSync(this.manifestPath)) {
-      fs.copyFileSync(this.manifestPath, this.manifestPath + '.corrupt-' + Date.now() + '.bak', fs.constants.COPYFILE_EXCL);
+      fs.copyFileSync(this.manifestPath, this.manifestPath + '.corrupt-' + Date.now() + '-' + crypto.randomBytes(4).toString('hex') + '.bak', fs.constants.COPYFILE_EXCL);
       this.corruptManifest = false;
     }
     writeFileAtomic(this.manifestPath, JSON.stringify(this.manifest, null, 2));
@@ -98,7 +107,7 @@ class Writer {
     this.lastSave = Date.now();
   }
   ensureDir(dir) {
-    if (path.resolve(dir) !== this.outputRoot) this.safePath(dir);
+    if (!samePath(path.resolve(dir), this.outputRoot)) this.safePath(dir);
     else if (isSymlink(dir)) throw new Error('输出根目录不能是符号链接');
     fs.mkdirSync(dir, { recursive: true });
     return dir;

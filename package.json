@@ -2,7 +2,7 @@
   "name": "novel-toolkit",
   "displayName": "小说工具箱 Novel Toolkit",
   "description": "朱墨主题的小说工具箱：空白、短行与引号检查，段落整理、繁简转换、章节导航、文件夹批量整理，以及 cool18/Pixiv 小说抓取。",
-  "version": "0.19.1",
+  "version": "0.19.2",
   "publisher": "localtools",
   "license": "MIT",
   "repository": {
@@ -309,7 +309,7 @@
         "novelToolkit.cool18Proxy": {
           "type": "string",
           "default": "http://127.0.0.1:7897",
-          "description": "cool18 抓取使用的 HTTP 代理，默认 http://127.0.0.1:7897。留空时回退到旧配置 cool18Novel.proxy，旧项未设置时仍使用默认代理；需要直连时将新旧两项均显式设为空字符串"
+          "description": "cool18 抓取使用的 HTTP 代理，默认 http://127.0.0.1:7897。显式留空即可直连；未显式设置时回退到旧配置 cool18Novel.proxy 或默认代理"
         },
         "novelToolkit.cool18Delay": {
           "type": "number",
@@ -348,7 +348,7 @@
         "novelToolkit.pixivProxy": {
           "type": "string",
           "default": "http://127.0.0.1:7897",
-          "description": "Pixiv 抓取使用的 HTTP 代理，默认 http://127.0.0.1:7897。留空时回退到旧配置 pixivNovel.proxy，旧项未设置时仍使用默认代理；需要直连时将新旧两项均显式设为空字符串"
+          "description": "Pixiv 抓取使用的 HTTP 代理，默认 http://127.0.0.1:7897。显式留空即可直连；未显式设置时回退到旧配置 pixivNovel.proxy 或默认代理"
         },
         "novelToolkit.pixivIntervalMs": {
           "type": "number",

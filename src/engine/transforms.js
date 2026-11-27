@@ -11,7 +11,8 @@ const WORDISH_RE = /[\w\u4e00-\u9fff\u3400-\u4dbf]/;
 // 英文单词间空格、中英文之间的空格、章节标题的标记分隔空格不报（排版规范允许）
 const MID_SPACE_RE = /[\u3400-\u4DBF\u4E00-\u9FFF]([ \t]+)(?=[\u3400-\u4DBF\u4E00-\u9FFF])/g;
 const TRAIL_SPACE_RE = /[ \t]+$/;
-const CHAPTER_HEAD_PREFIX_RE = /^\s*(?:[\[【（(]\s*)?(?:第\s*[〇零一二三四五六七八九十百千万两廿卅卌0-9０-９]{1,9}\s*[章节卷回部集话]|卷[〇零一二三四五六七八九十百千万两廿卅卌0-9０-９]{1,9}|序章|序言|楔子|引子|尾声|终章|后记|番外|終章|後記|尾聲)/;
+const CHAPTER_TOKEN_SRC = '(?:第\\s*[〇零一二三四五六七八九十百千万两廿卅卌0-9０-９]{1,9}\\s*[章节卷回部集话]|卷[〇零一二三四五六七八九十百千万两廿卅卌0-9０-９]{1,9}|序章|序言|楔子|引子|尾声|终章|后记|番外|終章|後記|尾聲)';
+const CHAPTER_HEAD_PREFIX_RE = new RegExp('^\\s*(?:[\\[【（(]\\s*)?' + CHAPTER_TOKEN_SRC + '(?:\\s*[\\]】）)]?\\s+' + CHAPTER_TOKEN_SRC + ')?');
 
 const isBlank = (text) => text.trim() === '';
 
@@ -346,7 +347,7 @@ function insertBlanksBeforeChapters(lines, chapterIdxs) {
 // 注意: String.split 会把匹配文本吞掉, 必须用 exec 手动切
 function splitInlineBreaks(line) {
   const s = String(line);
-  const trimmedRight = s.replace(/[ \u00a0\u3000]+$/, '');
+  const trimmedRight = s.replace(/[ \t\u00a0\u3000]+$/, '');
   if (!trimmedRight) {
     return [s];
   }
@@ -365,7 +366,7 @@ function splitInlineBreaks(line) {
   while ((m = re.exec(body)) !== null) {
     const runStart = m.index;
     if (runStart > last) {
-      out.push(prefix + body.slice(last, runStart).replace(/[ \u00a0\u3000]+$/, ''));
+      out.push(prefix + body.slice(last, runStart).replace(/[ \t\u00a0\u3000]+$/, ''));
     }
     prefix = /^\u3000+$/.test(m[0]) ? '　　' : '';
     last = runStart + m[0].length;
@@ -383,11 +384,12 @@ function splitInlineBreaks(line) {
 // 单点不改, 分两种情况:
 //   句点类（.．。｡）静默放行（句号/小数点）; 点号类（·・）前后都是汉字时是间隔号（哈利·波特）放行;
 //   其余单点记入 singles 交上层提示（如行尾孤立的 ・/•/⋯）。
-const ELLIPSIS_DOT_POINTS = {
+const ELLIPSIS_DOT_POINTS = Object.assign(Object.create(null), {
   '…': 3, '⋯': 3, '⋮': 3, '‥': 2,
   '•': 1, '·': 1, '・': 1,
   '.': 1, '．': 1, '。': 1, '｡': 1,
-};
+});
+const ELLIPSIS_CHAR_RE = /[…⋯⋮‥•·・.．。｡]/;
 const ELLIPSIS_PERIOD_CHARS = new Set(['.', '．', '。', '｡']);
 const CJKISH_RE = /[\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff]/;
 
@@ -397,7 +399,7 @@ function normalizeEllipsis(lines) {
   const singles = [];
   for (let i = 0; i < lines.length; i++) {
     const line = String(lines[i]);
-    if (![...line].some((c) => c in ELLIPSIS_DOT_POINTS)) {
+    if (!ELLIPSIS_CHAR_RE.test(line)) {
       out[i] = line;
       continue;
     }

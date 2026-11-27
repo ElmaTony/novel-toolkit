@@ -68,6 +68,9 @@ function registerNavigationCommands({ reg, panel, checker }) {
         target = lines[0];
       }
     }
+    if (editor.document.isClosed || target === undefined || target < 0 || target >= editor.document.lineCount) {
+      return;
+    }
     jumpToLine(editor, lines, target, label);
   };
 
@@ -105,6 +108,9 @@ function registerNavigationCommands({ reg, panel, checker }) {
       if (target === undefined) {
         target = lines[0];
       }
+    }
+    if (editor.document.isClosed || target === undefined || target < 0 || target >= editor.document.lineCount) {
+      return;
     }
     const start = new vscode.Position(target, 0);
     editor.revealRange(new vscode.Range(start, start), vscode.TextEditorRevealType.InCenterIfOutsideViewport);

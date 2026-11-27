@@ -14,6 +14,10 @@ let data = { fileName: '正在读取文件…', chapters: [], hasDocument: false
 let scrape = { busy: false, taskText: '' };
 let cursorLine = -1;
 let lastScrollChapterLine = -1;
+let renderedChaptersSig = '';
+let renderedHasDoc = null;
+let activeRowEl = null;
+let taskConfirmed = false;
 const previewTimers = {};
 let hintTimer = null;
 
@@ -124,6 +128,14 @@ function renderList() {
   const chapterCount = data.chapters.filter((entry) => entry.kind !== 'volume').length;
   const volumeCount = data.chapters.length - chapterCount;
   $('chCount').textContent = data.chapters.length ? chapterCount + ' 章' + (volumeCount ? ' · ' + volumeCount + ' 卷' : '') : '';
+  const sig = query + '\n' + data.chapters.length + '\n' + data.chapters.map((c) => c.line + ':' + c.kind + ':' + c.title).join('\n');
+  if (sig === renderedChaptersSig && data.hasDocument === renderedHasDoc) {
+    highlightCurrent(false);
+    return;
+  }
+  renderedChaptersSig = sig;
+  renderedHasDoc = data.hasDocument;
+  activeRowEl = null;
   box.innerHTML = '';
   if (!data.chapters.length) {
     box.appendChild(emptyRow(data.hasDocument ? '未识别到章节名，可在设置中调整识别规则' : '打开文稿后显示章节目录'));
@@ -149,8 +161,18 @@ function renderList() {
     const volumeMatch = !!g.volume && !!query && g.volume.title.toLocaleLowerCase().includes(query);
     const items = g.items.filter((item) => !query || volumeMatch || item.entry.title.toLocaleLowerCase().includes(query) || String(item.number).padStart(3, '0').includes(query));
     if (!items.length && !(g.volume && (!query || volumeMatch))) return;
-    if (g.volume) { fragment.appendChild(chapterRow(g.volume, null, currentLine)); shown++; }
-    items.forEach((item) => { fragment.appendChild(chapterRow(item.entry, item.number, currentLine)); shown++; });
+    if (g.volume) {
+      const volEl = chapterRow(g.volume, null, currentLine);
+      if (g.volume.line === currentLine) activeRowEl = volEl;
+      fragment.appendChild(volEl);
+      shown++;
+    }
+    items.forEach((item) => {
+      const chEl = chapterRow(item.entry, item.number, currentLine);
+      if (item.entry.line === currentLine) activeRowEl = chEl;
+      fragment.appendChild(chEl);
+      shown++;
+    });
   });
   if (shown) box.appendChild(fragment);
   else box.appendChild(emptyRow('没有匹配的章节'));
@@ -171,13 +193,18 @@ function scrollRowIntoList(row, center) {
 function highlightCurrent(autoScroll) {
   const index = currentChapterIndex();
   const line = index >= 0 ? data.chapters[index].line : -1;
-  document.querySelectorAll('.ch').forEach((el) => {
-    const current = Number(el.dataset.line) === line;
-    el.classList.toggle('current', current);
-    el.setAttribute('aria-current', String(current));
-  });
+  if (activeRowEl && Number(activeRowEl.dataset.line) !== line) {
+    activeRowEl.classList.remove('current');
+    activeRowEl.setAttribute('aria-current', 'false');
+    activeRowEl = null;
+  }
+  const row = line >= 0 ? ($('chapters').querySelector('.ch[data-line="' + line + '"]') || document.querySelector('.ch[data-line="' + line + '"]')) : null;
+  if (row) {
+    row.classList.add('current');
+    row.setAttribute('aria-current', 'true');
+    activeRowEl = row;
+  }
   if (autoScroll && line >= 0 && line !== lastScrollChapterLine && preferences.tab === 'organize') {
-    const row = document.querySelector('.ch[data-line="' + line + '"]');
     if (row) {
       lastScrollChapterLine = line;
       scrollRowIntoList(row, false);
@@ -186,7 +213,8 @@ function highlightCurrent(autoScroll) {
 }
 
 function render() {
-  $('fileName').textContent = data.fileName;
+  if ($('fileNameText')) $('fileNameText').textContent = data.fileName;
+  else $('fileName').textContent = data.fileName;
   $('fileStatus').textContent = !data.hasDocument ? '' : data.dirty ? '未保存' : '已保存';
   $('fileStatus').className = 'file-status' + (data.hasDocument && data.dirty ? ' dirty' : '');
   renderIssues();
@@ -320,17 +348,24 @@ window.addEventListener('message', (event) => {
     highlightCurrent(true);
   } else if (message.type === 'scrapeState') {
     scrape = { busy: !!message.state.busy, taskText: message.state.taskText || '' };
+    if (scrape.busy) taskConfirmed = true;
     renderScrape(message.state);
     renderTask();
   } else if (message.type === 'scrapePreview') {
     const el = $(message.kind === 'cool18' ? 'cool18Preview' : 'pixivPreview');
     el.textContent = message.text;
   } else if (message.type === 'task') {
-    const wasBusy = scrape.busy;
     scrape = { busy: !!message.running, taskText: message.text || '' };
-    if (!message.running && wasBusy) $('forceGrab').checked = false;
+    if (message.running) {
+      taskConfirmed = true;
+    } else if (taskConfirmed) {
+      $('forceGrab').checked = false;
+      taskConfirmed = false;
+      renderTask();
+      post({ command: 'refresh' });
+      return;
+    }
     renderTask();
-    if (!message.running && wasBusy) post({ command: 'refresh' });
   }
 });
 

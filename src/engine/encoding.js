@@ -23,7 +23,8 @@ function scoreDoubleByte(buf, enc) {
   if (!dec) {
     return { enc, bad: 1, cjk: 0, marks: 0 };
   }
-  const s = dec.decode(buf);
+  const sample = buf.length > 65536 ? buf.subarray(0, 65536) : buf;
+  const s = dec.decode(sample, { stream: true });
   const n = s.length || 1;
   let bad = 0;
   let cjk = 0;
@@ -57,21 +58,28 @@ function looksLikeUtf16(buf) {
   let evenZeros = 0;
   let oddHiCJK = 0;
   let evenHiCJK = 0;
+  let oddNonZh = 0;
+  let evenNonZh = 0;
   for (let i = 0; i < n; i += 2) {
-    if (buf[i] === 0) { zeros++; evenZeros++; }
-    if (buf[i + 1] === 0) { zeros++; }
-    if (buf[i + 1] >= 0x4E && buf[i + 1] <= 0x9F) { oddHiCJK++; }  // LE: CJK 高字节在奇数位
-    if (buf[i] >= 0x4E && buf[i] <= 0x9F) { evenHiCJK++; }         // BE: CJK 高字节在偶数位
+    const b0 = buf[i];
+    const b1 = buf[i + 1];
+    if (b0 === 0) { zeros++; evenZeros++; }
+    if (b1 === 0) { zeros++; }
+    if (b1 >= 0x4E && b1 <= 0x9F) { oddHiCJK++; }  // LE: CJK 高字节在奇数位
+    if (b0 >= 0x4E && b0 <= 0x9F) { evenHiCJK++; } // BE: CJK 高字节在偶数位
+    // 韩文(AC-D7)/孤立代理项(D8-DF)/私用区(E0-F8) 在中文小说 UTF-16 中极罕见，常见于 Big5/GBK 被错看成 UTF-16
+    if (b1 >= 0xAC && b1 <= 0xF8) { oddNonZh++; }
+    if (b0 >= 0xAC && b0 <= 0xF8) { evenNonZh++; }
   }
   const pairs = n / 2;
   if (zeros / n > 0.04) {
     // 0x00 填充字节集中在哪一侧，即是 LE（奇数位高字节在前 → 0x00 在偶…按字节序判断）
     return evenZeros > zeros - evenZeros ? 'utf16be' : 'utf16le';
   }
-  if (oddHiCJK / pairs > 0.3 && oddHiCJK > evenHiCJK * 3) {
+  if (oddHiCJK / pairs > 0.3 && oddHiCJK > evenHiCJK * 3 && oddNonZh / pairs < 0.15) {
     return 'utf16le';
   }
-  if (evenHiCJK / pairs > 0.3 && evenHiCJK > oddHiCJK * 3) {
+  if (evenHiCJK / pairs > 0.3 && evenHiCJK > oddHiCJK * 3 && evenNonZh / pairs < 0.15) {
     return 'utf16be';
   }
   return null;

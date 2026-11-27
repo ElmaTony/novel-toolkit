@@ -53,7 +53,7 @@ function buildMergedName(items) {
   const complete = items.some((it) =>
     /(\d+\s*完[）)])|（完）|\(完\)|完[）)]|全文完|大结局|完结|全一帖/.test(it.t.title));
   const starts = items.map((it) => (it.cover ? it.cover.a : it.key[1])).filter((n) => Number.isInteger(n) && n > 0 && n < 1e8);
-  const ends = items.map((it) => (it.cover ? it.cover.b : (it.key[4] || it.key[1]))).filter((n) => Number.isInteger(n) && n > 0 && n < 1e8);
+  const ends = items.map((it) => (it.key[4] || (it.cover ? it.cover.b : it.key[1]))).filter((n) => Number.isInteger(n) && n > 0 && n < 1e8);
   let tag;
   if (complete) {
     tag = '【完】';
@@ -93,9 +93,12 @@ class Cool18Core {
   constructor(opts = {}) {
     this.outputRoot = opts.outputRoot;
     this.proxy = opts.proxy || '';
-    this.delayMs = Math.max(0, Number(opts.delayMs === undefined ? 1000 : opts.delayMs));
-    this.maxPages = Math.max(1, Number(opts.maxPages) || 300);
-    this.maxRetries = Math.max(1, Number(opts.maxRetries) || 4);
+    const rawDelay = opts.delayMs === undefined ? 1000 : Number(opts.delayMs);
+    this.delayMs = Number.isFinite(rawDelay) ? Math.max(0, rawDelay) : 1000;
+    const rawMaxPages = Number(opts.maxPages);
+    this.maxPages = Number.isFinite(rawMaxPages) && rawMaxPages >= 1 ? Math.floor(rawMaxPages) : 300;
+    const rawMaxRetries = Number(opts.maxRetries);
+    this.maxRetries = Number.isFinite(rawMaxRetries) && rawMaxRetries >= 1 ? Math.floor(rawMaxRetries) : 4;
     this.cleanAds = opts.cleanAds !== false;
     this.log = opts.log || (() => {});
     this.fetchPage = opts.fetchPage || fetchPage; // 可注入（离线测试用）
@@ -281,9 +284,6 @@ class Cool18Core {
       it.pos = idx + 1; // 文件名按成品阅读顺序编号
     });
     for (const it of items) {
-      if (signal && signal.aborted && items.length > 1) {
-        aborted = true; // 中断时已抓到的照常落盘
-      }
       // 文件名按排序后的位置编号（即成品阅读顺序）
       const fname = String(it.pos).padStart(3, '0') + '_' + sanitizeName(it.t.title) + '.txt';
       const p = path.join(out, fname);

@@ -206,24 +206,30 @@ function registerScrapeCommands({ reg, panel, scrape }) {
 
   reg('pixivSetCookie', async () => {
     const v = await vscode.window.showInputBox({
-      prompt: '粘贴 PHPSESSID 的值或整段 Cookie（浏览器 F12 → Application → Cookies → pixiv.net → PHPSESSID 的值）',
+      prompt: '粘贴 PHPSESSID 值或整段 Cookie（输入 CLEAR 可清除已存私密 Cookie）',
       password: true,
       ignoreFocusOut: true,
     });
     if (v === undefined) return;
-    if (!v.trim()) {
-      vscode.window.showWarningMessage('未输入内容，Cookie 未更改');
+    const trimmed = v.trim();
+    if (!trimmed) {
+      vscode.window.showWarningMessage('未输入内容，Cookie 未更改（若需清除请输入 CLEAR）');
       return;
     }
-    const trimmed = v.trim();
-    if (/^uids=/.test(trimmed) || /^eyJ/.test(trimmed)) {
+    if (trimmed.toUpperCase() === 'CLEAR') {
+      await scrape.setCookie('');
+      vscode.window.showInformationMessage('已清除私密存储中的 Pixiv Cookie');
+      panel.postScrapeState();
+      return;
+    }
+    if (/^uids=/i.test(trimmed) || /^eyJ/.test(trimmed)) {
       return vscode.window.showErrorMessage(
         '你粘贴的是广告追踪 Cookie（uids=...），不是 PHPSESSID。'
         + '请重新操作：F12 → Application → Cookies → pixiv.net → 找到名字为 PHPSESSID 的行 → 复制其 Value 值');
     }
-    if (!/PHPSESSID=/.test(trimmed) && !/^[0-9A-Za-z_]{20,}$/.test(trimmed)) {
+    if (!/PHPSESSID=/i.test(trimmed) && !/^[0-9A-Za-z_%.\-+~]{16,}$/.test(trimmed)) {
       return vscode.window.showErrorMessage(
-        '粘贴的内容不像 PHPSESSID（应为字母数字下划线组合，长度约 20-40 字符）。请确认你复制的是 PHPSESSID 的值');
+        '粘贴的内容不像 PHPSESSID（应为字母数字及 _%.-+~ 组合，长度不少于 16 位）。请确认你复制的是 PHPSESSID 的值');
     }
     await scrape.setCookie(trimmed);
     vscode.window.showInformationMessage('Cookie 已保存（VSCode 私密存储，不写入明文配置）。提示：与旧版独立插件的 Cookie 存储不互通，首次使用需重新粘贴一次');

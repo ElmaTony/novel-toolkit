@@ -7,6 +7,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const transforms = require('../engine/transforms');
 const { decodeToUtf8 } = require('../engine/encoding');
 const { AnalysisWorker } = require('../engine/analysis-worker');
@@ -19,8 +20,18 @@ const isCancelled = (signal) => !!(signal && (signal.aborted || signal.isCancell
 // 文件之间让出事件循环，宿主才能接收取消事件并更新进度。
 const yieldToHost = () => new Promise((resolve) => setImmediate(resolve));
 
-function walkTxt(dir, out) {
-  for (const name of fs.readdirSync(dir)) {
+function walkTxt(dir, out, errors, isRoot = true) {
+  let names;
+  try {
+    names = fs.readdirSync(dir);
+  } catch (e) {
+    if (!isRoot && errors) {
+      errors.push(dir + ' (' + e.message + ')');
+      return out;
+    }
+    throw e;
+  }
+  for (const name of names) {
     const p = path.join(dir, name);
     let st;
     try {
@@ -32,7 +43,7 @@ function walkTxt(dir, out) {
       continue; // 不跟随符号链接/junction：指向祖先目录时会无限递归
     }
     if (st.isDirectory()) {
-      walkTxt(p, out);
+      walkTxt(p, out, errors, false);
     } else if (TXT_RE.test(name) && !BAK_RE.test(name)) {
       out.push(p);
     }
@@ -42,9 +53,9 @@ function walkTxt(dir, out) {
 
 // 原子写盘：先写同目录唯一临时文件，再同盘 rename——崩溃/断电不会留下半个文件
 function writeFileAtomic(file, data) {
-  const tmp = file + '.' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) + '.tmp';
+  const tmp = file + '.' + crypto.randomBytes(8).toString('hex') + '.tmp';
   try {
-    fs.writeFileSync(tmp, data);
+    fs.writeFileSync(tmp, data, { flag: 'wx' });
     fs.renameSync(tmp, file);
   } catch (e) {
     try { fs.unlinkSync(tmp); } catch (e2) { /* 尽力清理 */ }
@@ -71,9 +82,9 @@ class BatchProcessor {
     this.cancelled = true;
   }
 
-  list(folder) {
+  list(folder, errors) {
     this.cancelled = false;
-    return walkTxt(folder, []);
+    return walkTxt(folder, [], errors, true);
   }
 
   // 整理流水线: 合并换行 → 去缩进 → 加缩进（可选 .bak 备份）
@@ -98,7 +109,7 @@ class BatchProcessor {
     const original = det.text;
     if (original.includes('\uFFFD') || original.includes('\u0000')) return { file, sourceEncoding, changed: false, skipped: true, needsReview: true, merged: 0, paragraphs: 0 };
     if (original === '') return { file, sourceEncoding, changed: false, merged: 0, paragraphs: 0, needsReview: false };
-    const lines = original.replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n');
+    const lines = original.replace(/\r\n?/g, '\n').replace(/\n$/, '').split('\n');
 
     const r = prepared ? prepared.result.merged : transforms.mergeLines(lines, {
       indentStartsParagraph: o.indentStartsParagraph,
@@ -135,8 +146,9 @@ class BatchProcessor {
 
   // 批量整理: 返回 { total, changed, unchanged, errors, needsReview[] }
   async processFolder(folder, opts = {}) {
-    const files = this.list(folder);
-    const results = { total: files.length, changed: 0, unchanged: 0, errors: [], needsReview: [], files: [] };
+    const errors = [];
+    const files = this.list(folder, errors);
+    const results = { total: files.length, changed: 0, unchanged: 0, errors, needsReview: [], files: [] };
     const analysis = new AnalysisWorker();
     try {
     for (const file of files) {
@@ -147,7 +159,8 @@ class BatchProcessor {
       }
       try {
         let prepared;
-        if (fs.statSync(file).size > 512000) {
+        const statBefore = await fs.promises.stat(file);
+        if (statBefore.size > 512000) {
           const buf = await fs.promises.readFile(file);
           const det = decodeToUtf8(buf);
           if (det.text.includes('\uFFFD') || det.text.includes('\u0000')) {
@@ -157,7 +170,8 @@ class BatchProcessor {
             for (const key of ['indentStartsParagraph', 'smartParagraphs', 'keepBlankLines', 'indentString', 'skipChapterTitles', 'normalizeExisting', 'chapterPattern']) { if (opts[key] !== undefined) workerOptions[key] = opts[key]; }
             const result = await analysis.run('batch', { text: det.text, options: workerOptions });
             if (this.cancelled || isCancelled(opts.signal)) { results.cancelled = true; break; }
-            if (!buf.equals(await fs.promises.readFile(file))) throw new Error('处理期间文件已修改，跳过写入');
+            const statAfter = await fs.promises.stat(file);
+            if (statAfter.size !== statBefore.size || statAfter.mtimeMs !== statBefore.mtimeMs) throw new Error('处理期间文件已修改，跳过写入');
             prepared = { buf, det, result };
           }
         }
@@ -166,7 +180,7 @@ class BatchProcessor {
         if (r.changed) results.changed++;
         else results.unchanged++;
         if (r.needsReview) results.needsReview.push(file);
-        if (opts.onProgress) opts.onProgress(file, r);
+        if (opts.onProgress) opts.onProgress(file, r, results.files.length, results.total);
       } catch (e) {
         results.errors.push(file + ' (' + e.message + ')');
       }

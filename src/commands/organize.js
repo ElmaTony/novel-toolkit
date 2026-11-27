@@ -11,6 +11,7 @@ const { AnalysisWorker, isLargeDocument } = require('../engine/analysis-worker')
 // 繁简转换清单输出面板与后台分析线程（懒创建, 复用）
 let _t2sChannel = null;
 let _organizeWorker = null;
+let _t2sRunning = false;
 function t2sChannel() {
   if (!_t2sChannel) {
     _t2sChannel = vscode.window.createOutputChannel('小说工具箱 · 繁简转换清单');
@@ -254,61 +255,75 @@ function registerOrganizeCommands({ reg, panel, checker, cfg }) {
     if (!editor) {
       return noDoc();
     }
-    const doc = editor.document;
-    const startVersion = doc.version;
-    let out;
-    let r;
-    if (isLargeDocument(doc)) {
-      const text = typeof docText === 'function' ? docText(doc) : docLines(doc).join('\n');
-      const res = await organizeWorker().run('t2s', { text });
-      if (doc.isClosed) return noDoc();
-      if (startVersion !== undefined && doc.version !== startVersion) {
-        return vscode.window.showWarningMessage('转换期间文档内容已变化，请重新运行繁体转简体');
+    if (_t2sRunning) {
+      return vscode.window.showInformationMessage('繁体转简体正在运行中，请稍候');
+    }
+    _t2sRunning = true;
+    try {
+      const doc = editor.document;
+      const startVersion = doc.version;
+      let out;
+      let r;
+      if (isLargeDocument(doc)) {
+        const text = typeof docText === 'function' ? docText(doc) : docLines(doc).join('\n');
+        const runT2s = () => organizeWorker().run('t2s', { text });
+        const res = typeof vscode.window.withProgress === 'function'
+          ? await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: '繁体转简体（大文件后台处理中…）' }, runT2s)
+          : await runT2s();
+        if (doc.isClosed) return noDoc();
+        if (startVersion !== undefined && doc.version !== startVersion) {
+          return vscode.window.showWarningMessage('转换期间文档内容已变化，请重新运行繁体转简体');
+        }
+        out = res.lines;
+        r = res.summary;
+      } else {
+        const lines = docLines(doc);
+        const summary = createChangeSummary();
+        out = lines.map((l, idx) => {
+          const { output, changes } = t2sDetail(l);
+          summary.add(changes, idx + 1);
+          return output;
+        });
+        r = summary.result();
       }
-      out = res.lines;
-      r = res.summary;
-    } else {
-      const lines = docLines(doc);
-      const summary = createChangeSummary();
-      out = lines.map((l, idx) => {
-        const { output, changes } = t2sDetail(l);
-        summary.add(changes, idx + 1);
-        return output;
-      });
-      r = summary.result();
-    }
-    if (r.totalChanges === 0) {
-      return vscode.window.showInformationMessage('文件中没有繁体字');
-    }
-    // 清单面板: 真实替换按次数降序 + 长词组优先, 行号最多展示 12 个; 恒等词组保护单列
-    const byCount = (a, b) =>
-      (b.count - a.count) || (b.from.length - a.from.length) || (a.from < b.from ? -1 : 1);
-    const ch = t2sChannel();
-    ch.clear();
-    ch.appendLine('繁→简 转换清单 —— ' + (editor.document.fileName || '').split(/[\\/]/).pop());
-    ch.appendLine('共 ' + r.totalChanges + ' 处替换 · ' + r.changedLines + ' 行变化 · ' + r.real.length + ' 个字/词（按出现次数排序）');
-    ch.appendLine('─'.repeat(56));
-    for (const e of r.real.sort(byCount)) {
-      const shown = e.lines.slice(0, 12).join(', ');
-      const more = e.lines.length > 12 ? ' …共' + e.lines.length + '行' : '';
-      const tag = e.from.length > 1 ? '（词组）' : '';
-      ch.appendLine(e.from + ' → ' + e.to + tag + ' ×' + e.count + '　行 ' + shown + more);
-    }
-    if (r.protectedTotal > 0) {
+      if (r.totalChanges === 0) {
+        return vscode.window.showInformationMessage('文件中没有繁体字');
+      }
+      const ok = await applyLines(
+        editor,
+        out,
+        '已转换 ' + r.changedLines + ' 行（' + r.totalChanges + ' 处），清单已输出到「繁简转换清单」面板；不满意可 Ctrl+Z 撤销'
+      );
+      if (!ok) {
+        return;
+      }
+      // 清单面板: 真实替换按次数降序 + 长词组优先, 行号最多展示 12 个; 恒等词组保护单列
+      const byCount = (a, b) =>
+        (b.count - a.count) || (b.from.length - a.from.length) || (a.from < b.from ? -1 : a.from > b.from ? 1 : 0);
+      const ch = t2sChannel();
+      ch.clear();
+      ch.appendLine('繁→简 转换清单 —— ' + (editor.document.fileName || '').split(/[\\/]/).pop());
+      ch.appendLine('共 ' + r.totalChanges + ' 处替换 · ' + r.changedLines + ' 行变化 · ' + r.real.length + ' 个字/词（按出现次数排序）');
       ch.appendLine('─'.repeat(56));
-      ch.appendLine('词组保护（文本未变，不计入替换）×' + r.protectedTotal + ' 处：');
-      for (const e of r.protected.sort(byCount)) {
+      for (const e of r.real.sort(byCount)) {
         const shown = e.lines.slice(0, 12).join(', ');
         const more = e.lines.length > 12 ? ' …共' + e.lines.length + '行' : '';
-        ch.appendLine(e.from + '（保护）×' + e.count + '　行 ' + shown + more);
+        const tag = e.from.length > 1 ? '（词组）' : '';
+        ch.appendLine(e.from + ' → ' + e.to + tag + ' ×' + e.count + '　行 ' + shown + more);
       }
+      if (r.protectedTotal > 0) {
+        ch.appendLine('─'.repeat(56));
+        ch.appendLine('词组保护（文本未变，不计入替换）×' + r.protectedTotal + ' 处：');
+        for (const e of r.protected.sort(byCount)) {
+          const shown = e.lines.slice(0, 12).join(', ');
+          const more = e.lines.length > 12 ? ' …共' + e.lines.length + '行' : '';
+          ch.appendLine(e.from + '（保护）×' + e.count + '　行 ' + shown + more);
+        }
+      }
+      ch.show(true); // true = 保持编辑器焦点
+    } finally {
+      _t2sRunning = false;
     }
-    ch.show(true); // true = 保持编辑器焦点
-    await applyLines(
-      editor,
-      out,
-      '已转换 ' + r.changedLines + ' 行（' + r.totalChanges + ' 处），清单已输出到「繁简转换清单」面板；不满意可 Ctrl+Z 撤销'
-    );
   });
 }
 
