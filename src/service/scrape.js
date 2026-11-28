@@ -295,6 +295,8 @@ class ScrapeManager {
     this.task(true, '正在连接 Pixiv…');
     const saved = [];
     const failures = [];
+    const seriesPrompts = [];
+    const knownSeriesTargets = new Set(targets.filter((t) => t.type === 'series').map((t) => String(t.id)));
     let authError = false;
     try {
       const cookie = await this.pixivCookie();
@@ -329,16 +331,16 @@ class ScrapeManager {
               : await core.downloadNovel(t.id, ctx);
           saved.push(r);
           if (Array.isArray(r.failures)) failures.push(...r.failures.map(f => typeof f === 'string' ? f : t.type + ':' + t.id + ' / ' + f.id + ': ' + f.message));
-          if (t.type === 'novel' && r.seriesNav && !core.writer.manifest.series[r.seriesNav.seriesId] && !controller.signal.aborted) {
-            const pickAns = await vscode.window.showInformationMessage(
-              '《' + r.title + '》属于系列《' + r.seriesNav.seriesTitle + '》（第 ' + r.seriesNav.order + ' 话），要顺手抓全系列吗？',
-              '抓全系列', '不用'
-            );
-            if (pickAns === '抓全系列') {
-              const seriesResult = await core.downloadSeries(r.seriesNav.seriesId, ctx);
-              saved.push(seriesResult);
-              if (Array.isArray(seriesResult.failures)) failures.push(...seriesResult.failures.map(f => typeof f === 'string' ? f : f.id + ': ' + f.message));
-            }
+          if (t.type === 'novel' && r.seriesNav && !core.writer.manifest.series[r.seriesNav.seriesId] &&
+              !knownSeriesTargets.has(String(r.seriesNav.seriesId)) && !controller.signal.aborted) {
+            const sid = String(r.seriesNav.seriesId);
+            knownSeriesTargets.add(sid);
+            seriesPrompts.push({
+              title: r.title,
+              seriesId: sid,
+              seriesTitle: r.seriesNav.seriesTitle,
+              order: r.seriesNav.order,
+            });
           }
         } catch (e) {
           if (e instanceof PixivError && e.kind === 'auth') { authError = true; break; }
@@ -369,7 +371,41 @@ class ScrapeManager {
     const out = { saved, failures, aborted: controller.signal.aborted, authError };
     this.task(false, this.summarizePixiv(out));
     if (reporter) reporter.finish(out, this.summarizePixiv(out));
+    if (seriesPrompts.length && !controller.signal.aborted && !authError) {
+      this._promptSeriesFollowUps(seriesPrompts, force);
+    }
     return out;
+  }
+
+  _promptSeriesFollowUps(seriesPrompts, force) {
+    Promise.resolve().then(async () => {
+      for (const prompt of seriesPrompts) {
+        const pickAns = await vscode.window.showInformationMessage(
+          '《' + prompt.title + '》属于系列《' + prompt.seriesTitle + '》（第 ' + prompt.order + ' 话），要顺手抓全系列吗？',
+          '抓全系列', '不用'
+        );
+        if (pickAns !== '抓全系列') continue;
+        const runSeries = (progress, followToken) => this.executePixiv(
+          [{ type: 'series', id: prompt.seriesId }],
+          {
+            report: (t) => progress && progress.report({ message: t }),
+            finish: () => {},
+          },
+          followToken,
+          { force }
+        );
+        if (typeof vscode.window.withProgress === 'function') {
+          await vscode.window.withProgress(
+            { location: vscode.ProgressLocation.Notification, title: 'Pixiv 抓取系列《' + prompt.seriesTitle + '》', cancellable: true },
+            runSeries
+          );
+        } else {
+          await runSeries(null, undefined);
+        }
+      }
+    }).catch((err) => {
+      this.log('系列跟进提示异常: ' + ((err && err.message) || err));
+    });
   }
 
   savedCount(results) {

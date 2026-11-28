@@ -15,8 +15,8 @@ const pad3 = (n) => String(n).padStart(3, '0');
 const novelUrl = (id) => `https://www.pixiv.net/novel/${id}`;
 const seriesUrl = (id) => `https://www.pixiv.net/novel/series/${id}`;
 
-// 章节名行: 已带章节标记（第X章/话/卷…、序章、楔子等）就用原标题, 否则补成 "第N话 标题"
-const CHAPTER_MARK_RE = /^\s*(第[〇零一二三四五六七八九十百千万两0-9０-９]+[章节卷回部集话]|序章|序言|楔子|引子|尾声|后记|终章|番外)/;
+// 章节名行: 已带章节标记（第X章/话/卷…、括号包裹、序章/楔子、繁体終章/後記/尾聲、Chapter N）就用原标题, 否则补成 "第N话 标题"
+const CHAPTER_MARK_RE = /^\s*(?:[\[【（(]\s*)?(?:第\s*[〇零一二三四五六七八九十百千万两廿卅卌0-9０-９]+\s*[章节卷回部集话]|卷[〇零一二三四五六七八九十百千万两廿卅卌0-9０-９]+|序章|序言|楔子|引子|尾声|后记|终章|番外|終章|後記|尾聲|chapter\s*\d+)/i;
 function chapterTitleLine(order, title) {
   const t = String(title || '').trim();
   if (t && CHAPTER_MARK_RE.test(t)) {
@@ -246,13 +246,14 @@ class PixivCore {
     this.forceSeries.delete(String(seriesId));
     const wasAborted = !!(ctx.signal && ctx.signal.aborted);
     const prevCount = entry.count;
+    const prevAborted = !!entry.aborted;
     entry.count = meta.publishedContentCount;
     entry.aborted = wasAborted;
     entry.fetchedAt = new Date().toISOString();
     entry.failed = failures;
     this.writer.writeUrlNote(dir, seriesUrl(seriesId), meta.title);
     const mergedTarget = path.join(dir, '_合并.txt');
-    const needMerged = !wasAborted && (saved > 0 || failures.length > 0 || force || prevCount !== meta.publishedContentCount || !entry.mergedFile || !fs.existsSync(mergedTarget));
+    const needMerged = !wasAborted && (saved > 0 || failures.length > 0 || force || prevAborted || prevCount !== meta.publishedContentCount || !entry.mergedFile || !fs.existsSync(mergedTarget));
     if (needMerged) this.writeMerged(meta, chapters, dir, entry);
     this.writer.saveManifest();
     ctx.onProgress && ctx.onProgress(total, total, `系列《${meta.title}》完成 新${saved}/跳${skipped}/败${failures.length}`);
@@ -396,6 +397,7 @@ class PixivCore {
         else results.push(await this.downloadNovel(t.id, ctx));
       } catch (e) {
         if (e.kind === 'auth') throw e;
+        if (ctx.signal && ctx.signal.aborted) break;
         failures.push({ target: t, kind: e.kind || 'error', message: e.message });
         this.log(`目标 ${t.type} ${t.id} 失败(${e.kind}): ${e.message}`);
       }

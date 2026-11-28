@@ -15,6 +15,9 @@ class Checker {
     this.statusBar.name = '小说工具箱';
     this.statusBar.command = 'novelToolkit.check';
     this.silenced = new Set();
+    this.scannedUris = new Set();
+    this.pendingUris = new Set();
+    this.failedUris = new Set();
     this.timers = new Map();
     this.analysis = new AnalysisWorker();
     this.scanCache = new WeakMap();
@@ -34,19 +37,23 @@ class Checker {
       !c.get('excludedLanguages', []).includes(doc.languageId);
   }
 
-  fullScan(doc) {
+  fullScan(doc, force = false) {
+    const key = doc.uri.toString();
     if (!this.appliesTo(doc)) {
-      const key = doc.uri.toString();
       const hadDiag = (this.diags.get(doc.uri) || []).length > 0;
       const wasSilenced = this.silenced.delete(key);
+      const hadPending = this.pendingUris.delete(key);
+      const hadFailed = this.failedUris.delete(key);
+      this.scannedUris.delete(key);
       if (hadDiag) this.diags.delete(doc.uri);
       const scheme = doc.uri && doc.uri.scheme;
-      if (hadDiag || wasSilenced || !scheme || scheme === 'file' || scheme === 'untitled') {
+      if (hadDiag || wasSilenced || hadPending || hadFailed || !scheme || scheme === 'file' || scheme === 'untitled') {
         this.notify();
       }
       return undefined;
     }
-    this.silenced.delete(doc.uri.toString());
+    const wasSilenced = this.silenced.delete(key);
+    this.failedUris.delete(key);
     const c = this.cfg();
     const options = {
       ignoreBlankLines: c.get('ignoreBlankLines', true),
@@ -59,11 +66,19 @@ class Checker {
     const cached = this.scanCache.get(doc);
     const version = doc.version;
     const publish = (r) => {
-      if (this.disposed || doc.isClosed || doc.version !== version || !this.appliesTo(doc)) return;
+      if (this.disposed || doc.isClosed || doc.version !== version || !this.appliesTo(doc)) {
+        if (!this.scanJobs.has(doc) && this.pendingUris.delete(key)) this.notify();
+        return;
+      }
       if (version !== undefined) this.scanCache.set(doc, { version, signature, result: r });
       return this.publish(doc, r);
     };
-    if (cached && version !== undefined && cached.version === version && cached.signature === signature) return publish(cached.result);
+    if (cached && version !== undefined && cached.version === version && cached.signature === signature) {
+      if (!force && !wasSilenced && this.scannedUris.has(key)) {
+        return this._summarizeResult(doc, cached.result);
+      }
+      return publish(cached.result);
+    }
     if (!isLargeDocument(doc)) {
       const lines = [];
       for (let i = 0; i < doc.lineCount; i++) lines.push(doc.lineAt(i).text);
@@ -79,18 +94,60 @@ class Checker {
       : Array.from({ length: doc.lineCount }, (_, i) => doc.lineAt(i).text).join('\n');
     const job = { version, signature, epoch, promise: null };
     this.scanJobs.set(doc, job);
+    this.pendingUris.add(key);
+    this.notify();
     job.promise = this.analysis.run('scan', { text, options }).then(result => {
       if (this.scanJobs.get(doc) === job) this.scanJobs.delete(doc);
-      if (this.scanEpoch !== epoch || this.silenced.has(doc.uri.toString())) return;
+      if (this.scanEpoch !== epoch || this.silenced.has(key) || this.disposed || doc.isClosed || doc.version !== version || !this.appliesTo(doc)) {
+        if (!this.scanJobs.has(doc) && this.pendingUris.delete(key)) this.notify();
+        return;
+      }
       return publish(result);
     }, err => {
       if (this.scanJobs.get(doc) === job) this.scanJobs.delete(doc);
+      if (!this.scanJobs.has(doc)) {
+        this.pendingUris.delete(key);
+        if (!this.disposed && !doc.isClosed && this.scanEpoch === epoch && !this.silenced.has(key)) {
+          this.failedUris.add(key);
+        }
+        this.notify();
+      }
       throw err;
     });
     return job.promise;
   }
 
+  _summarizeResult(doc, r) {
+    const blank = [];
+    for (const w of r.ws) {
+      blank.push({ line: w.line, startCol: 0, endCol: w.len });
+    }
+    for (const w of r.mid) {
+      blank.push({ line: w.line, startCol: w.col, endCol: w.col + w.len });
+    }
+    blank.sort((a, b) => (a.line - b.line) || (a.startCol - b.startCol));
+    const short = r.short.map((s) => ({ line: s.line, startCol: s.lead, endCol: s.lead + s.text.length }));
+    const quote = r.quote.map((q) => {
+      const text = q.line < doc.lineCount ? doc.lineAt(q.line).text : '';
+      const trimmed = typeof text === 'string' ? text.trimEnd() : '';
+      const startCol = typeof text === 'string' ? (text.length - text.trimStart().length) : 0;
+      const endCol = Math.max(startCol, trimmed.length);
+      return { line: q.line, startCol, endCol };
+    });
+    return {
+      ws: r.ws.map((w) => w.line),
+      mid: [...new Set(r.mid.map((w) => w.line))],
+      short: r.short.map((s) => s.line),
+      quote: r.quote.map((q) => q.line),
+      ranges: { blank, short, quote }
+    };
+  }
+
   publish(doc, r) {
+    const key = doc.uri.toString();
+    this.pendingUris.delete(key);
+    this.failedUris.delete(key);
+    this.scannedUris.add(key);
     const list = [];
     for (const w of r.ws) {
       const d = new vscode.Diagnostic(
@@ -135,12 +192,7 @@ class Checker {
     }
     this.diags.set(doc.uri, list);
     this.notify();
-    return {
-      ws: r.ws.map((w) => w.line),
-      mid: [...new Set(r.mid.map((w) => w.line))],
-      short: r.short.map((s) => s.line),
-      quote: r.quote.map((q) => q.line)
-    };
+    return this._summarizeResult(doc, r);
   }
 
   checkDocument(doc, force) {
@@ -150,22 +202,27 @@ class Checker {
     if (!force && this.silenced.has(doc.uri.toString())) {
       return;
     }
-    const result = this.fullScan(doc);
+    const result = this.fullScan(doc, !!force);
     if (result && result.catch) result.catch(error => { if (!this.disposed) vscode.window.setStatusBarMessage('检查失败：' + error.message, 5000); });
     return result;
   }
 
-  // 大文件防抖复查
-  schedule(doc) {
+  // 防抖复查（小文件轻量防抖，大文件 250ms 防抖）
+  schedule(doc, delayMs = 250) {
     const key = doc.uri.toString();
     const old = this.timers.get(key);
     if (old) {
       clearTimeout(old);
     }
+    if (!this.scannedUris.has(key) && !this.silenced.has(key) && this.appliesTo(doc)) {
+      this.pendingUris.add(key);
+      this.failedUris.delete(key);
+      this.notify();
+    }
     this.timers.set(key, setTimeout(() => {
       this.timers.delete(key);
       this.checkDocument(doc);
-    }, 250));
+    }, delayMs));
   }
 
   reset() {
@@ -175,6 +232,9 @@ class Checker {
     this.timers.clear();
     this.diags.clear();
     this.silenced.clear();
+    this.scannedUris.clear();
+    this.pendingUris.clear();
+    this.failedUris.clear();
   }
 
   silence(doc) {
@@ -185,6 +245,8 @@ class Checker {
       clearTimeout(timer);
       this.timers.delete(key);
     }
+    this.pendingUris.delete(key);
+    this.failedUris.delete(key);
     this.silenced.add(key);
     this.diags.delete(doc.uri);
     this.notify();
@@ -197,6 +259,9 @@ class Checker {
     const key = doc.uri.toString();
     this.diags.delete(doc.uri);
     this.silenced.delete(key);
+    this.scannedUris.delete(key);
+    this.pendingUris.delete(key);
+    this.failedUris.delete(key);
     const t = this.timers.get(key);
     if (t) {
       clearTimeout(t);
@@ -206,31 +271,48 @@ class Checker {
   }
 
   counts(uri) {
-    const dl = this.diags.get(uri) || [];
+    const key = uri.toString();
+    const raw = this.diags.get(uri);
+    const dl = raw || [];
+    const silenced = this.silenced.has(key);
+    const pending = this.pendingUris.has(key);
+    const failed = this.failedUris.has(key);
+    const ready = !silenced && !pending && !failed && (
+      this.scannedUris.has(key) ||
+      (Array.isArray(raw) && raw.length > 0) ||
+      (typeof this.diags.has === 'function' && this.diags.has(uri))
+    );
     return {
       ws: dl.filter((d) => d.code === 'leading-whitespace').length,
       mid: dl.filter((d) => d.code === 'mid-space').length,
       short: dl.filter((d) => d.code === 'short-line').length,
       quote: dl.filter((d) => d.code === 'quote-pair').length,
-      silenced: this.silenced.has(uri.toString())
+      silenced,
+      pending,
+      failed,
+      ready
     };
   }
 
   // 文件重命名时迁移检查状态（警告清单 + 静音标记），内容未变则状态不变
   moveState(oldUri, newUri) {
     const oldKey = oldUri.toString();
+    const newKey = newUri.toString();
     const timer = this.timers.get(oldKey);
     if (timer) {
       clearTimeout(timer);
       this.timers.delete(oldKey);
     }
-    const wasSilenced = this.silenced.has(oldKey);
-    this.silenced.delete(oldKey);
+    const wasSilenced = this.silenced.delete(oldKey);
+    const wasScanned = this.scannedUris.delete(oldKey);
+    const wasPending = this.pendingUris.delete(oldKey);
+    const wasFailed = this.failedUris.delete(oldKey);
     const list = this.diags.get(oldUri);
     this.diags.delete(oldUri);
-    if (wasSilenced) {
-      this.silenced.add(newUri.toString());
-    }
+    if (wasSilenced) this.silenced.add(newKey);
+    if (wasScanned) this.scannedUris.add(newKey);
+    if (wasPending) this.pendingUris.add(newKey);
+    if (wasFailed) this.failedUris.add(newKey);
     if (list && list.length) {
       this.diags.set(newUri, list);
     }
@@ -272,6 +354,18 @@ class Checker {
     if (counts.silenced) {
       this.statusBar.text = '贴左:已静音';
       this.statusBar.tooltip = '已保存/已缩进，检查暂停中；Alt+F8 重新检查';
+      this.statusBar.show();
+      return;
+    }
+    if (counts.failed) {
+      this.statusBar.text = '贴左:失败';
+      this.statusBar.tooltip = '上次自动检查失败（点击重新检查）';
+      this.statusBar.show();
+      return;
+    }
+    if (!counts.ready) {
+      this.statusBar.text = counts.pending ? '贴左:扫描中…' : '贴左:—';
+      this.statusBar.tooltip = counts.pending ? '后台正在检查当前文件，请稍候…' : '当前文件尚未检查（点击检查）';
       this.statusBar.show();
       return;
     }

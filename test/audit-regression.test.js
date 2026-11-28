@@ -334,7 +334,7 @@ async function main() {
   eq(chapters.numToCn(1e12), '', 'numToCn 超出亿组返回空串');
   const volEntries = chapters.chapterEntries(['【第一卷 序】', '第 1 卷 续', '第 12 章 标题']);
   eq(volEntries.map(e => e.kind), ['volume', 'volume', 'chapter'], '卷号支持括号包裹及第后空格');
-  eq(chapters.unifyChapterNumbers(['第 12 章 标题']).lines[0], '第十二 章 标题', '章节号统一支持第后空格');
+  eq(chapters.unifyChapterNumbers(['第 12 章 标题']).lines[0], '第十二章 标题', '章节号统一支持第后空格并收拢单位前空格');
   const { sanitizeName: c18Sanitize } = require('../src/engine/cool18/parse');
   eq(c18Sanitize('书名\x01测试...'), '书名测试', 'cool18 sanitizeName 剔除控制字符与尾随点号');
   eq(c18Sanitize('a'.repeat(79) + '.bc').endsWith('.'), false, 'cool18 sanitizeName 截断后不留尾点');
@@ -712,6 +712,232 @@ async function main() {
   };
   jumpToLine(fakeEd, [0], 0, '空白');
   eq([jumpedSel.anchor.character, jumpedSel.active.character], [2, 3], 'jumpToLine 精确选中正文汉字间空格列范围');
+
+  // --- v0.19.3 全量审查修复回归 ---
+  // 1) Checker 大文件扫描中与失败时 ready=false，状态栏与面板不误报 ✓；完成后 ready=true
+  {
+    let resolveScan, rejectScan;
+    const bigUri = { scheme: 'file', toString: () => 'file:///big-pending.txt' };
+    const bigPendingDoc = { uri: bigUri, version: 1, lineCount: 9000, isClosed: false, languageId: 'plaintext', fileName: 'big.txt', lineAt: () => ({ text: '正文' }) };
+    const statusObj = { text: '', tooltip: '', show() {}, hide() {} };
+    const diagStore = new Map();
+    const pendingVs = {
+      window: { activeTextEditor: { document: bigPendingDoc }, createStatusBarItem: () => statusObj },
+      languages: { createDiagnosticCollection: () => ({
+        set(u, l) { diagStore.set(u.toString(), l); },
+        get(u) { return diagStore.get(u.toString()); },
+        has(u) { return diagStore.has(u.toString()); },
+        delete(u) { diagStore.delete(u.toString()); },
+        clear() { diagStore.clear(); },
+        dispose() {},
+      }) },
+      workspace: { getConfiguration: () => ({ get: (_k, d) => d }) },
+      Diagnostic: function (r, m, s) { this.range = r; this.message = m; this.severity = s; },
+      DiagnosticSeverity: { Warning: 1 },
+      Range: function (a, b, c, d) { this.start = { line: a, character: b }; this.end = { line: c, character: d }; },
+      StatusBarAlignment: { Right: 1 },
+    };
+    const { Checker: PendingChecker } = load('src/service/checker.js', { vscode: pendingVs });
+    const pck = new PendingChecker({ subscriptions: [] });
+    pck.analysis = { run: () => new Promise((res, rej) => { resolveScan = res; rejectScan = rej; }), dispose() {} };
+    eq(pck.counts(bigUri).ready, false, '未扫描文档 counts.ready 为 false');
+    const scan1 = pck.fullScan(bigPendingDoc);
+    eq(pck.counts(bigUri).pending, true, '大文件后台扫描期间标记 pending');
+    eq(statusObj.text, '贴左:扫描中…', '大文件后台扫描期间状态栏不误报 ✓');
+    const { PanelManager: PendingPanel } = load('src/ui/panel.js', { vscode: pendingVs });
+    const pp = new PendingPanel({ subscriptions: [] }, pck, {});
+    pp.analysis = { run: async () => [], dispose() {} };
+    const pMsgs = [];
+    const bigEd = { document: bigPendingDoc, selection: { active: { line: 0 } } };
+    pp.panel = { webview: { postMessage: m => pMsgs.push(m) } };
+    pp.editor = () => bigEd;
+    await pp.update();
+    eq(pMsgs.find(m => m.type === 'update').wsCount, -1, '扫描未完成时面板保持未检查状态');
+    rejectScan(new Error('worker crash'));
+    await assert.rejects(scan1, /worker crash/); pass++;
+    eq([pck.counts(bigUri).failed, pck.counts(bigUri).ready, statusObj.text], [true, false, '贴左:失败'], '后台扫描失败时不误报 ✓');
+    const scan2 = pck.fullScan(bigPendingDoc);
+    resolveScan({ ws: [], mid: [], short: [], quote: [] });
+    await scan2;
+    eq([pck.counts(bigUri).ready, statusObj.text], [true, '贴左:✓'], '扫描完成确认无问题后显示 ✓');
+  }
+
+  // 2) 章节行跳脏空格不选合法分隔空格；同行多处空格通过 ranges.blank 逐处前后跳转
+  {
+    let chapSel = null;
+    const chapEd = {
+      document: {
+        lineCount: 2,
+        lineAt: (i) => ({ text: i === 0 ? '第一章 初 入江湖' : '第一章 初入江湖  ', firstNonWhitespaceCharacterIndex: 0 }),
+      },
+      revealRange() {},
+      set selection(s) { chapSel = s; },
+    };
+    jumpToLine(chapEd, [0, 1], 0, '空白');
+    eq([chapSel.anchor.character, chapSel.active.character], [5, 6], 'jumpToLine 跳过章节分隔空格并精准选中脏空格');
+    jumpToLine(chapEd, [0, 1], 1, '空白');
+    eq([chapSel.anchor.character, chapSel.active.character], [8, 10], 'jumpToLine 跳过章节分隔空格并精准选中行尾空格');
+
+    const navSels = [];
+    const navMsgs = [];
+    const navCmds = {};
+    const { Checker: NavChecker } = load('src/service/checker.js', {
+      vscode: {
+        window: { activeTextEditor: null, createStatusBarItem: () => ({ show() {}, hide() {} }), setStatusBarMessage: m => navMsgs.push(m) },
+        languages: { createDiagnosticCollection: () => ({ set() {}, get() { return []; }, has() { return false; }, delete() {}, clear() {}, dispose() {} }) },
+        workspace: { getConfiguration: () => ({ get: (_k, d) => d }) },
+        Diagnostic: function (r, m, s) { this.range = r; this.message = m; this.severity = s; },
+        DiagnosticSeverity: { Warning: 1 },
+        Range: function (a, b, c, d) { this.start = { line: a, character: b }; this.end = { line: c, character: d }; },
+        StatusBarAlignment: { Right: 1 },
+      },
+    });
+    const navChecker = new NavChecker({ subscriptions: [] });
+    const navDoc = { uri: { scheme: 'file', toString: () => 'file:///multi.txt' }, version: 1, lineCount: 1, isClosed: false, languageId: 'plaintext', lineAt: () => ({ text: '他 说 她 来' }) };
+    let curNavSel = { start: { line: 0, character: 0 }, end: { line: 0, character: 0 }, active: { line: 0, character: 0 } };
+    const navEd = {
+      document: navDoc,
+      get selection() { return curNavSel; },
+      revealRange() {},
+      set selection(s) {
+        curNavSel = { start: s.anchor, end: s.active, active: s.active };
+        navSels.push([s.anchor.character, s.active.character]);
+      },
+    };
+    const navCore = load('src/core/editor.js', {
+      vscode: {
+        EndOfLine: { CRLF: 2, LF: 1 },
+        Position: function (l, c) { this.line = l; this.character = c; },
+        Range: function (a, b) { this.start = a; this.end = b; },
+        Selection: function (a, b) { this.anchor = a; this.active = b; },
+        TextEditorRevealType: { InCenterIfOutsideViewport: 2 },
+        window: { setStatusBarMessage: m => navMsgs.push(m) },
+        workspace: { getConfiguration: () => ({ get: (_k, d) => d }) },
+      },
+    });
+    load('src/commands/navigation.js', {
+      vscode: { window: { showInformationMessage() {}, setStatusBarMessage: m => navMsgs.push(m) } },
+      '../core/editor': navCore,
+    }).registerNavigationCommands({ reg: (n, f) => { navCmds[n] = f; }, panel: { editor: () => navEd, chapterEntries: async () => [] }, checker: navChecker });
+    await navCmds.nextProblem();
+    await navCmds.nextProblem();
+    await navCmds.prevProblem();
+    eq(navSels, [[1, 2], [3, 4], [1, 2]], 'nextProblem/prevProblem 按诊断精确区间在同行多处间前后跳转');
+    eq(navMsgs[0].includes('第 1 / 3 处'), true, '空白跳转总处数与面板计数口径一致');
+  }
+
+  // 3) zh-convert 不把纯简体词记入词组保护，仍保护宫商角徵羽
+  {
+    const { t2sDetail, createChangeSummary } = require('../src/engine/zh-convert');
+    const sum = createChangeSummary();
+    sum.add(t2sDetail('後來什麼頭髮，宮商角徵羽').changes, 1);
+    const res = sum.result();
+    eq(res.protected.some(e => e.from === '什么' || e.from === '后来' || e.from === '头发'), false, '普通纯简体输出词不污染词组保护清单');
+    eq(t2s(t2s('宮商角徵羽')), '宫商角徵羽', '需二次保护的专名仍保持幂等');
+  }
+
+  // 4) sanitizeName 先截断剥尾再校验 Windows 保留设备名
+  {
+    const { sanitizeName: pSan } = require('../src/engine/pixiv/writer');
+    const { sanitizeName: cSan } = require('../src/engine/cool18/parse');
+    eq(cSan('CON' + '_'.repeat(78) + 'x'), '_CON', 'cool18 sanitizeName 截断剥尾后仍拦住 CON 保留名');
+    eq(pSan('CON' + ' .'.repeat(30) + 'x', 48), '_CON', 'Pixiv sanitizeName 截断剥尾后仍拦住 CON 保留名');
+  }
+
+  // 5) Pixiv 取消后续传仍补写 _合并.txt；CHAPTER_MARK_RE 对齐章节格式；pixivGrabUser 透传 force；seriesNav 弹窗不锁死 active
+  {
+    const abortedMergeRoot = folder('pixiv-aborted-merge');
+    const amCore = new PixivCore({ outputRoot: abortedMergeRoot, saveUrlNote: false });
+    amCore.api.seriesAll = async () => ({ meta: { id: '91', title: '续合集', userName: '作者', userId: '9', publishedContentCount: 2 }, chapters: [{ id: '911', order: 1 }, { id: '912', order: 2 }] });
+    amCore.api.novel = async (id) => ({ id, title: id === '911' ? '【第一章】 序幕' : '終章', userName: '作者', userId: '9', content: '正文' + id, tags: [] });
+    await amCore.downloadSeries('91');
+    const amDir = amCore.writer.seriesDir('作者', '9', '续合集', '91');
+    const mergedFile = path.join(amDir, '_合并.txt');
+    fs.writeFileSync(mergedFile, '旧合并内容');
+    amCore.writer.manifest.series['91'].aborted = true;
+    amCore.writer.manifest.series['91'].count = 2;
+    await amCore.downloadSeries('91');
+    eq(fs.readFileSync(mergedFile, 'utf8').includes('正文912'), true, '上次中止后续传即使全部单章跳过也补更新 _合并.txt');
+    eq(fs.readFileSync(amCore.writer.safePath(amCore.writer.manifest.series['91'].files[0].file), 'utf8').split(/\r?\n/)[0], '【第一章】 序幕', 'CHAPTER_MARK_RE 识别括号包裹章节名不加重复前缀');
+    eq(fs.readFileSync(amCore.writer.safePath(amCore.writer.manifest.series['91'].files[1].file), 'utf8').split(/\r?\n/)[0], '終章', 'CHAPTER_MARK_RE 识别繁体終章不加重复前缀');
+
+    const executedCmds = [];
+    const { PanelManager: ForceUserPanel } = load('src/ui/panel.js', {
+      vscode: {
+        window: { createStatusBarItem: () => ({ show() {}, hide() {} }), activeTextEditor: undefined },
+        workspace: { getConfiguration: () => ({ get: (_k, d) => d }) },
+        commands: { executeCommand: (...args) => executedCmds.push(args) },
+        StatusBarAlignment: { Right: 1 },
+      },
+    });
+    const fpUser = new ForceUserPanel({ subscriptions: [] }, { appliesTo: () => false }, {});
+    await fpUser.handle({ command: 'run', name: 'pixivGrabUser', force: true });
+    eq(executedCmds.pop(), ['novelToolkit.pixivGrabUser', { force: true }], '面板 pixivGrabUser 透传 forceGrab 复选框');
+
+    let resolvePrompt;
+    let activeDuringPrompt = null;
+    const promptVs = {
+      window: {
+        createOutputChannel: () => ({ appendLine() {}, dispose() {} }),
+        showInformationMessage: () => {
+          activeDuringPrompt = promptMgr.busy;
+          return new Promise(res => { resolvePrompt = res; });
+        },
+      },
+      workspace: { getConfiguration: () => ({ get: (_k, d) => d }) },
+    };
+    const { ScrapeManager: PromptMgr } = load('src/service/scrape.js', { vscode: promptVs });
+    const promptMgr = new PromptMgr({ subscriptions: [], globalState: { get: () => [], update() {} } });
+    promptMgr.pixivCookie = async () => '';
+    promptMgr.buildPixivCore = () => ({
+      writer: { manifest: { novels: {}, series: {} } },
+      downloadNovel: async () => ({ type: 'novel', id: '1', title: '单篇', skipped: false, seriesNav: { seriesId: '88', seriesTitle: '系列', order: 1 } }),
+    });
+    const execOut = await promptMgr.executePixiv([{ type: 'novel', id: '1' }], { report() {}, finish() {} });
+    eq([execOut.saved.length, promptMgr.busy], [1, false], '带 seriesNav 的单篇完成后立即释放任务锁不阻塞返回');
+    await Promise.resolve();
+    eq(activeDuringPrompt, false, '弹出顺手抓全系列询问时不占死全局任务锁');
+    if (resolvePrompt) resolvePrompt('不用');
+  }
+
+  // 6) unifyChapterNumbers 卷+章双前缀、empty merge 幂等、normalizeEllipsis 英文/数字间隔号
+  {
+    eq(chapters.unifyChapterNumbers(['第1卷 第12章 第3次相遇', '【卷2】 第5章 启程']).lines,
+      ['第一卷 第十二章 第3次相遇', '【卷二】 第五章 启程'], 'unifyChapterNumbers 一次转换同行卷号与章号且不动正文数字');
+    const mWrites = [];
+    const mCmds = {};
+    load('src/commands/organize.js', {
+      vscode: { window: { showInformationMessage() {} } },
+      '../core/editor': { docLines: () => [''], applyLines: async (_e, l) => mWrites.push(l), noDoc() {} },
+    }).registerOrganizeCommands({ reg: (n, f) => { mCmds[n] = f; }, panel: { editor: () => ({ document: {} }) }, checker: {}, cfg: (k) => ({ get: (key, d) => key === 'keepBlankLines' ? false : d }) });
+    await mCmds.merge();
+    eq(mWrites.length, 0, 'keepBlankLines=false 对空文档执行合并保持幂等不写回');
+    eq(transforms.normalizeEllipsis(['蒙奇·D·路飞与3·15晚会']).singles, [], 'normalizeEllipsis 放行含字母数字的正常间隔号');
+  }
+
+  // 7) cool18 剥除 script/comment、未闭合 a 不吞后续 tid、findGaps 目录索引帖不掩盖缺章、直连拒绝回环重定向
+  {
+    const c18p = require('../src/engine/cool18/parse');
+    const noisy = c18p.extractThread('<h1 class="main-title">书名</h1><pre><!-- hidden > --><script>var x=1;</script><a href="other.html">广告未闭合<a href="index.php?tid=123456">第一章</a>　　正文内容。</pre>');
+    eq(noisy.links, [{ tid: 123456, text: '第一章' }], '未闭合 <a> 不吞掉后续有效章节链接');
+    eq(noisy.body, '广告未闭合\n　　正文内容。', 'bodyToText 剔除 HTML 注释与 script 噪声');
+    const { findGaps: c18FindGaps } = require('../src/engine/cool18/core');
+    eq(c18FindGaps([
+      { key: [0, 1, 0, 1, 3], cover: { vol: 0, a: 1, b: 1, part: 0 }, t: { links: [{ tid: 2 }, { tid: 3 }] } },
+      { key: [0, 3, 0, 3, 3], cover: { vol: 0, a: 3, b: 3, part: 0 }, t: { links: [] } },
+    ]), ['第 0 卷缺 2 章'], 'cool18 findGaps 目录索引帖不掩盖子章缺口');
+
+    const ssrfHttps = { request: (_opts, cb) => {
+      const req = new EventEmitter(); req.destroy = err => req.emit('error', err);
+      req.end = () => queueMicrotask(() => {
+        const res = new EventEmitter(); res.statusCode = 302; res.headers = { location: 'http://127.0.0.1:8080/secret' }; res.resume = () => {};
+        cb(res);
+      });
+      return req;
+    } };
+    const ssrfFetcher = load('src/engine/cool18/fetcher.js', { https: ssrfHttps, '../async': { sleep: async () => {} } });
+    await assert.rejects(ssrfFetcher.fetchPage('https://example.invalid/start', { retries: 1 }), /拒绝重定向到本机/); pass++;
+  }
 
   console.log('===== 审查回归：通过 ' + pass + '，失败 0 =====');
 }

@@ -155,6 +155,10 @@ class Cool18Core {
             this.log('[重试排队 ' + retry + '/2] ' + url + ': ' + e.message);
             if (tm) { seen.delete(tm[1]); }
             queue.push(Object.assign({}, item, { retry }));
+            if (!(await waitNext(this._nextDelay(), signal))) {
+              this.log('[停止] 用户中断');
+              break;
+            }
           } else {
             this.log('[失败] ' + url + ': ' + e.message);
             failed.push({ url, error: e.message });
@@ -308,6 +312,13 @@ class Cool18Core {
 // 缺章检测（按卷）: 每卷检查章号覆盖, 卷之间的缺口单独报告
 function findGaps(items) {
   const RANGE_LIMIT = 2000; // 章号范围护栏：远端标题可含"第99999999章"，无界循环会挂死
+  const volStarts = new Map();
+  for (const it of items) {
+    if (!it.cover || !Number.isInteger(it.key[1])) continue;
+    const vol = it.cover.vol;
+    if (!volStarts.has(vol)) volStarts.set(vol, []);
+    volStarts.get(vol).push(it.key[1]);
+  }
   const vols = new Map();
   let minVol = Infinity;
   let maxVol = -Infinity;
@@ -317,7 +328,14 @@ function findGaps(items) {
     }
     const vol = it.cover.vol;
     const a = it.key[1];
-    const b = it.key[4] || it.key[1];
+    let b = it.key[4] || it.key[1];
+    // 若该帖为目录索引帖（标题标示区间且含多条子链接，且同卷存在落在该区间内的分章帖），只认领起始章 a 避免掩盖子章缺口
+    if (b > a && it.t && Array.isArray(it.t.links) && it.t.links.length >= 2) {
+      const starts = volStarts.get(vol) || [];
+      if (starts.some((s) => s > a && s <= b)) {
+        b = a;
+      }
+    }
     if (!vols.has(vol)) {
       vols.set(vol, { covered: new Set(), min: Infinity, max: -Infinity, abnormal: false });
     }

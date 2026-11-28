@@ -20,13 +20,22 @@ function headers() {
 
 const REDIRECT_CODES = new Set([301, 302, 303, 307, 308]);
 
+function isLocalHost(hostname) {
+  const h = String(hostname || '').toLowerCase().replace(/^\[|\]$/g, '');
+  return h === 'localhost' || h.endsWith('.localhost') || h === '0.0.0.0' || h === '::1' || h === '::' ||
+    h.startsWith('127.') || h.startsWith('169.254.') || h.startsWith('fe80:');
+}
+
 // 返回原始 Buffer（解码交给 parse.decodePage，便于离线测试；自动跟随最多 5 次重定向）
 function requestBuffer(urlStr, { proxy, timeoutMs, signal }, redirectsLeft = 5) {
   return new Promise((resolve, reject) => {
     let settled = false;
+    let activeTarget = null;
+    let totalTimer = null;
     const done = (fn, val) => {
       if (settled) return;
       settled = true;
+      if (totalTimer) { clearTimeout(totalTimer); totalTimer = null; }
       fn(val);
     };
     let u;
@@ -44,6 +53,16 @@ function requestBuffer(urlStr, { proxy, timeoutMs, signal }, redirectsLeft = 5) 
     } catch (e) {
       return done(reject, e);
     }
+    if (timeoutMs > 0) {
+      totalTimer = setTimeout(() => {
+        const err = new Error('请求总耗时超时');
+        if (activeTarget && typeof activeTarget.destroy === 'function') {
+          try { activeTarget.destroy(err); } catch (_) { /* ignore */ }
+        }
+        done(reject, err);
+      }, timeoutMs * 2);
+      if (totalTimer.unref) totalTimer.unref();
+    }
     const isHttps = u.protocol === 'https:';
     const defaultPort = isHttps ? 443 : 80;
     const targetPort = Number(u.port) || defaultPort;
@@ -56,6 +75,7 @@ function requestBuffer(urlStr, { proxy, timeoutMs, signal }, redirectsLeft = 5) 
       signal,
     };
     const bind = (req) => {
+      activeTarget = req;
       req.on('timeout', () => req.destroy(new Error('连接超时')));
       req.on('error', (err) => done(reject, err));
     };
@@ -68,6 +88,10 @@ function requestBuffer(urlStr, { proxy, timeoutMs, signal }, redirectsLeft = 5) 
         let nextUrl;
         try { nextUrl = new URL(res.headers.location, urlStr).toString(); }
         catch (e) { return done(reject, new Error('无效的重定向地址')); }
+        if (!proxyInfo && isLocalHost(new URL(nextUrl).hostname)) {
+          return done(reject, new Error('拒绝重定向到本机或链路本地地址: ' + nextUrl));
+        }
+        if (totalTimer) { clearTimeout(totalTimer); totalTimer = null; }
         requestBuffer(nextUrl, { proxy, timeoutMs, signal }, redirectsLeft - 1).then(
           (buf) => done(resolve, buf),
           (err) => done(reject, err)
@@ -123,7 +147,9 @@ function requestBuffer(urlStr, { proxy, timeoutMs, signal }, redirectsLeft = 5) 
         timeout: timeoutMs,
         signal,
       });
-      tunnel.on('connect', (res, socket) => {
+      activeTarget = tunnel;
+      tunnel.on('connect', (res, socket, head) => {
+        if (typeof tunnel.setTimeout === 'function') tunnel.setTimeout(0);
         if (res.statusCode !== 200) {
           socket.destroy();
           return done(reject, new Error('代理 CONNECT 失败: HTTP ' + res.statusCode));
@@ -132,6 +158,7 @@ function requestBuffer(urlStr, { proxy, timeoutMs, signal }, redirectsLeft = 5) 
           socket.destroy();
           return done(reject, new Error('已取消'));
         }
+        if (head && head.length) socket.unshift(head);
         const req = https.request(Object.assign(base, { socket, agent: false }), onRes);
         bind(req);
         req.end();

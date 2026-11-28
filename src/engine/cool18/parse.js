@@ -52,8 +52,14 @@ function unescapeEntities(s) {
       Object.prototype.hasOwnProperty.call(NAMED_ENTITIES, name) ? NAMED_ENTITIES[name] : m);
 }
 
+function stripHtmlNoise(s) {
+  return String(s || '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, '');
+}
+
 function cleanText(s) {
-  return unescapeEntities(String(s || '').replace(/<\/?[a-zA-Z!/][^>]*>/g, '')).trim();
+  return unescapeEntities(stripHtmlNoise(s).replace(/<\/?[a-zA-Z!/][^>]*>/g, '')).trim();
 }
 
 // 字节流 → 文本: 严格 UTF-8 → HTML meta charset → 双字节特征字评分（准确区分 Big5 与 GB18030）
@@ -78,7 +84,7 @@ function decodePage(buf) {
   return decodeToUtf8(buf).text;
 }
 
-const ANCHOR_RE = /<a\b[^>]*?\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>([\s\S]*?)<\/a>/gi;
+const ANCHOR_RE = /<a\b[^>]*?\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>((?:(?!<a\b)[\s\S])*?)<\/a>/gi;
 
 function extractThread(page, opts = {}) {
   let m = page.match(/<h1 class="main-title">([\s\S]*?)<\/h1>/);
@@ -91,7 +97,7 @@ function extractThread(page, opts = {}) {
 
   m = page.match(/<pre>([\s\S]*?)<\/pre>/i);
   if (!m) {
-    m = page.match(/id="content-section">([\s\S]*?)(?=<div class="view_ad_incontent"|<div class="ai-detection-feedback")/i);
+    m = page.match(/id\s*=\s*["']?content-section["']?[^>]*>([\s\S]*?)(?=<div\b[^>]*class\s*=\s*["']?(?:view_ad_incontent|ai-detection-feedback)|$)/i);
   }
   if (!m) {
     throw new Error('找不到正文 (<pre> / content-section 均未命中)');
@@ -183,7 +189,7 @@ function stripAdLines(text, onRemove) {
 //   首个"　　"段之前的行视为元信息（标题/作者/日期）, 逐行保留
 //   完全没有"　　"且无 <p> 的源 → 退回旧行为（逐行保留）
 function bodyToText(bodyHtml, opts = {}) {
-  let html = String(bodyHtml)
+  let html = stripHtmlNoise(bodyHtml)
     .replace(/[\x00\x01]/g, '')
     .replace(/<B>\s*<font[^>]*>\s*/gi, '')
     .replace(/<\/font[^>]*>\s*<\/B>/gi, '')
@@ -428,11 +434,12 @@ function sanitizeName(name) {
     .replace(/[\x00-\x1f]/g, '')
     .replace(/[\\/:*?"<>|\s]+/g, '_')
     .replace(/^[_ .]+|[_ .]+$/g, '');
-  // 标题来自远端页面不可信：剥离首尾点号与保留设备名，避免目录穿越或 Windows 尾点异常
-  if (/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$/i.test(s)) s = '_' + s;
+  // 标题来自远端页面不可信：先截断并剥离首尾符号，最后再校验 Windows 保留设备名
   s = s.slice(0, 80);
   if (/[\uD800-\uDBFF]$/.test(s)) s = s.slice(0, -1);
-  return s.replace(/[_ .]+$/g, '') || 'untitled';
+  s = s.replace(/[_ .]+$/g, '');
+  if (/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$/i.test(s)) s = '_' + s;
+  return s || 'untitled';
 }
 
 // 粘贴文本 → 按顺序去重的帖子 URL 列表。支持: 完整链接 / 纯tid / 行尾带标题

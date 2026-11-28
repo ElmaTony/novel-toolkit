@@ -38,7 +38,8 @@ function registerOrganizeCommands({ reg, panel, checker, cfg }) {
       keepBlankLines: cfg().get('keepBlankLines', true),
       chapterPattern: cfg().get('chapterPattern')
     });
-    if (r.lines.length === srcLines.length && r.lines.every((l, idx) => l === srcLines[idx])) {
+    const nextLines = r.lines.length ? r.lines : [''];
+    if (nextLines.length === srcLines.length && nextLines.every((l, idx) => l === srcLines[idx])) {
       const hint = r.indentParagraphs > 0
         ? '（已识别小说排版：' + r.indentParagraphs + ' 个缩进段落，但没有可合并的段内换行）'
         : '（未识别到小说排版特征：既没有段首缩进，也没有可合并的段内换行）';
@@ -47,7 +48,7 @@ function registerOrganizeCommands({ reg, panel, checker, cfg }) {
     const info = r.indentParagraphs > 0 ? '，识别到 ' + r.indentParagraphs + ' 个缩进段落' : '';
     await applyLines(
       editor,
-      r.lines,
+      nextLines,
       '已合并 ' + r.merged + ' 处段内换行（共 ' + r.paragraphs + ' 段' + info + '）；不满意可 Ctrl+Z 撤销'
     );
   });

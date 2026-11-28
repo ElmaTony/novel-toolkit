@@ -22,7 +22,11 @@ const previewTimers = {};
 let hintTimer = null;
 
 function post(message) { vsapi.postMessage(message); }
-function run(name) { post({ command: 'run', name }); }
+function run(name) {
+  const msg = { command: 'run', name };
+  if (name === 'pixivGrabUser') msg.force = forceGrabOn();
+  post(msg);
+}
 function savePreferences() { if (vsapi.setState) vsapi.setState(Object.assign({}, preferences)); }
 
 function applyTheme(announce) {
@@ -40,7 +44,11 @@ function applyTheme(announce) {
 
 function showTab(name) {
   preferences.tab = name === 'scrape' ? 'scrape' : 'organize';
-  document.querySelectorAll('[data-tab]').forEach((el) => el.setAttribute('aria-selected', String(el.dataset.tab === preferences.tab)));
+  document.querySelectorAll('[data-tab]').forEach((el) => {
+    const selected = el.dataset.tab === preferences.tab;
+    el.setAttribute('aria-selected', String(selected));
+    el.setAttribute('tabindex', selected ? '0' : '-1');
+  });
   $('tab-organize').hidden = preferences.tab !== 'organize';
   $('tab-scrape').hidden = preferences.tab !== 'scrape';
   savePreferences();
@@ -48,7 +56,11 @@ function showTab(name) {
 
 function showSource(source) {
   preferences.source = source === 'cool18' ? 'cool18' : 'pixiv';
-  document.querySelectorAll('[data-source]').forEach((el) => el.setAttribute('aria-selected', String(el.dataset.source === preferences.source)));
+  document.querySelectorAll('[data-source]').forEach((el) => {
+    const selected = el.dataset.source === preferences.source;
+    el.setAttribute('aria-selected', String(selected));
+    el.setAttribute('tabindex', selected ? '0' : '-1');
+  });
   $('source-pixiv').hidden = preferences.source !== 'pixiv';
   $('source-cool18').hidden = preferences.source !== 'cool18';
   savePreferences();
@@ -335,6 +347,27 @@ document.body.addEventListener('click', (event) => {
     const row = document.querySelector('.ch.current');
     if (row) scrollRowIntoList(row, true);
   }
+});
+
+document.body.addEventListener('keydown', (event) => {
+  const tab = event.target && event.target.closest && event.target.closest('[role="tab"]');
+  if (!tab) return;
+  const list = tab.closest && tab.closest('[role="tablist"]');
+  if (!list) return;
+  const tabs = Array.from(list.querySelectorAll('[role="tab"]'));
+  const idx = tabs.indexOf(tab);
+  if (idx < 0 || !tabs.length) return;
+  let next = -1;
+  if (event.key === 'ArrowRight') next = (idx + 1) % tabs.length;
+  else if (event.key === 'ArrowLeft') next = (idx - 1 + tabs.length) % tabs.length;
+  else if (event.key === 'Home') next = 0;
+  else if (event.key === 'End') next = tabs.length - 1;
+  if (next < 0) return;
+  event.preventDefault();
+  const target = tabs[next];
+  if (target.dataset.tab) showTab(target.dataset.tab);
+  else if (target.dataset.source) showSource(target.dataset.source);
+  if (typeof target.focus === 'function') target.focus();
 });
 
 window.addEventListener('message', (event) => {

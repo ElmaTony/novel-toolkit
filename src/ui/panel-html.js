@@ -289,8 +289,8 @@ function buildPanelHtml() {
 <div class="app">
   <header class="header">
     <nav class="tabs" role="tablist" aria-label="工具箱页面">
-      <button type="button" class="tab" id="organizeTab" data-tab="organize" role="tab" aria-selected="true" aria-controls="tab-organize">整理</button>
-      <button type="button" class="tab" id="scrapeTab" data-tab="scrape" role="tab" aria-selected="false" aria-controls="tab-scrape">抓取</button>
+      <button type="button" class="tab" id="organizeTab" data-tab="organize" role="tab" aria-selected="true" tabindex="0" aria-controls="tab-organize">整理</button>
+      <button type="button" class="tab" id="scrapeTab" data-tab="scrape" role="tab" aria-selected="false" tabindex="-1" aria-controls="tab-scrape">抓取</button>
     </nav>
     <div class="header-actions">
       <button type="button" class="icon-btn" id="themeButton" data-action="theme" aria-label="切换面板主题" title="主题：跟随 VS Code">${icon('auto', 'i-auto')}${icon('sun', 'i-light')}${icon('moon', 'i-dark')}</button>
@@ -331,8 +331,8 @@ function buildPanelHtml() {
     </section>
     <section id="tab-scrape" class="page page-scrape" role="tabpanel" aria-labelledby="scrapeTab" hidden>
       <div class="segmented" role="tablist" aria-label="抓取来源">
-        <button type="button" id="pixivSource" data-source="pixiv" role="tab" aria-selected="true" aria-controls="source-pixiv">Pixiv 小说</button>
-        <button type="button" id="cool18Source" data-source="cool18" role="tab" aria-selected="false" aria-controls="source-cool18">cool18 书屋</button>
+        <button type="button" id="pixivSource" data-source="pixiv" role="tab" aria-selected="true" tabindex="0" aria-controls="source-pixiv">Pixiv 小说</button>
+        <button type="button" id="cool18Source" data-source="cool18" role="tab" aria-selected="false" tabindex="-1" aria-controls="source-cool18">cool18 书屋</button>
       </div>
       <section id="source-pixiv" role="tabpanel" aria-labelledby="pixivSource">
         <div class="status-line card"><span class="text"><span class="cookie" id="cookieChip">Cookie 未设置</span></span><button type="button" class="ghost" data-run="pixivSetCookie">${icon('key')}管理 Cookie</button></div>

@@ -2,7 +2,7 @@
   "name": "novel-toolkit",
   "displayName": "小说工具箱 Novel Toolkit",
   "description": "朱墨主题的小说工具箱：空白、短行与引号检查，段落整理、繁简转换、章节导航、文件夹批量整理，以及 cool18/Pixiv 小说抓取。",
-  "version": "0.19.2",
+  "version": "0.19.3",
   "publisher": "localtools",
   "license": "MIT",
   "repository": {
@@ -254,6 +254,7 @@
         "novelToolkit.shortLineMaxChars": {
           "type": "number",
           "default": 2,
+          "minimum": 1,
           "description": "标点短行判定的最大字符数（默认 2；更长的符号行视为分隔线，不报）"
         },
         "novelToolkit.quotePairCheck": {
@@ -367,6 +368,7 @@
           "type": "number",
           "default": 3,
           "minimum": 0,
+          "maximum": 10,
           "description": "Pixiv 网络错误/限速的最大重试次数"
         },
         "novelToolkit.pixivPageSeparator": {

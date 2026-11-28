@@ -5,6 +5,8 @@
 
 const vscode = require('vscode');
 const { isDocEditor } = require('./doc');
+const { firstSpaceIssueRange } = require('../engine/transforms');
+const chapters = require('../engine/chapters');
 
 const MID_SPACE_ONCE_RE = /[\u3400-\u4DBF\u4E00-\u9FFF]([ \t]+)(?=[\u3400-\u4DBF\u4E00-\u9FFF])/;
 const TRAIL_SPACE_ONCE_RE = /[ \t]+$/;
@@ -59,6 +61,32 @@ async function applyLines(editor, newLines, successMsg) {
   return ok;
 }
 
+function isTargetChapterLine(doc, target) {
+  const prev = target > 0 ? doc.lineAt(target - 1).text : '';
+  const cur = doc.lineAt(target).text;
+  const next = target + 1 < doc.lineCount ? doc.lineAt(target + 1).text : '';
+  const slice = target > 0 ? [prev, cur, next] : [cur, next];
+  const localIndex = target > 0 ? 1 : 0;
+  let pattern;
+  try {
+    if (vscode.workspace && typeof vscode.workspace.getConfiguration === 'function') {
+      pattern = vscode.workspace.getConfiguration('novelToolkit').get('chapterPattern');
+    }
+  } catch (_) { /* ignore */ }
+  return chapters.chapterLines(slice, pattern).includes(localIndex);
+}
+
+function jumpToRange(editor, range, index, total, label) {
+  const start = new vscode.Position(range.line, range.startCol);
+  const end = new vscode.Position(range.line, range.endCol);
+  editor.revealRange(new vscode.Range(start, end), vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+  editor.selection = new vscode.Selection(start, end);
+  vscode.window.setStatusBarMessage(
+    (label || '空白') + '：第 ' + (range.line + 1) + ' 行，第 ' + (index + 1) + ' / ' + total + ' 处',
+    5000
+  );
+}
+
 function jumpToLine(editor, lines, target, label) {
   const lineObj = editor.document.lineAt(target);
   const firstNonWs = lineObj.firstNonWhitespaceCharacterIndex || 0;
@@ -69,29 +97,24 @@ function jumpToLine(editor, lines, target, label) {
       startCol = firstNonWs;
       endCol = lineObj.text.trimEnd().length;
     } else if ((label === '空白' || !label) && firstNonWs === 0) {
-      const mid = lineObj.text.match(MID_SPACE_ONCE_RE);
-      if (mid) {
-        startCol = mid.index + 1;
-        endCol = startCol + mid[1].length;
-      } else {
-        const trail = lineObj.text.match(TRAIL_SPACE_ONCE_RE);
-        if (trail) {
-          startCol = trail.index;
-          endCol = startCol + trail[0].length;
-        }
+      const hit = firstSpaceIssueRange(lineObj.text, isTargetChapterLine(editor.document, target));
+      if (hit) {
+        startCol = hit.startCol;
+        endCol = hit.endCol;
       }
     }
   }
+  const defaultLabel = firstNonWs > 0 ? '行首空白' : '空白';
   const start = new vscode.Position(target, startCol);
   const end = new vscode.Position(target, endCol);
   editor.revealRange(new vscode.Range(start, end), vscode.TextEditorRevealType.InCenterIfOutsideViewport);
   editor.selection = new vscode.Selection(start, end);
   vscode.window.setStatusBarMessage(
-    (label || '行首空白') + '：第 ' + (target + 1) + ' 行，第 ' + (lines.indexOf(target) + 1) + ' / ' + lines.length + ' 处',
+    (label || defaultLabel) + '：第 ' + (target + 1) + ' 行，第 ' + (lines.indexOf(target) + 1) + ' / ' + lines.length + ' 处',
     5000
   );
 }
 
 const noDoc = () => vscode.window.showInformationMessage('当前没有打开的文件');
 
-module.exports = { isDocEditor, docLines, docText, eolOf, applyLines, jumpToLine, noDoc };
+module.exports = { isDocEditor, docLines, docText, eolOf, applyLines, jumpToLine, jumpToRange, noDoc };

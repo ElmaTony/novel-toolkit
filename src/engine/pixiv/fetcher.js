@@ -172,6 +172,14 @@ class Fetcher {
 
   _direct(urlStr) {
     return new Promise((resolve, reject) => {
+      let settled = false;
+      let totalTimer = null;
+      const done = (fn, val) => {
+        if (settled) return;
+        settled = true;
+        if (totalTimer) { clearTimeout(totalTimer); totalTimer = null; }
+        fn(val);
+      };
       const u = new URL(urlStr);
       const req = https.request({
         hostname: u.hostname,
@@ -181,9 +189,17 @@ class Fetcher {
         headers: this._headers(),
         timeout: this.timeoutMs,
         signal: this.signal || undefined,
-      }, (res) => this._consume(res).then(resolve, reject));
+      }, (res) => this._consume(res).then((v) => done(resolve, v), (e) => done(reject, e)));
+      if (this.timeoutMs > 0) {
+        totalTimer = setTimeout(() => {
+          const err = new Error('请求总耗时超时');
+          try { req.destroy(err); } catch (_) { /* ignore */ }
+          done(reject, err);
+        }, this.timeoutMs * 2);
+        if (totalTimer.unref) totalTimer.unref();
+      }
       req.on('timeout', () => req.destroy(new Error('连接超时')));
-      req.on('error', reject);
+      req.on('error', (e) => done(reject, e));
       req.end();
     });
   }
@@ -191,13 +207,22 @@ class Fetcher {
   // 经 HTTP 代理 CONNECT 隧道访问 443
   _viaProxy(urlStr) {
     return new Promise((resolve, reject) => {
+      let settled = false;
+      let totalTimer = null;
+      let activeReq = null;
+      const done = (fn, val) => {
+        if (settled) return;
+        settled = true;
+        if (totalTimer) { clearTimeout(totalTimer); totalTimer = null; }
+        fn(val);
+      };
       let u;
       let p;
       try {
         u = new URL(urlStr);
         p = parseProxy(this.proxy);
       } catch (e) {
-        return reject(e);
+        return done(reject, e);
       }
       const targetHostPort = `${u.hostname}:${Number(u.port) || 443}`;
       const tunnel = http.request({
@@ -209,15 +234,28 @@ class Fetcher {
         timeout: this.timeoutMs,
         signal: this.signal || undefined,
       });
-      tunnel.on('connect', (res, socket) => {
+      activeReq = tunnel;
+      if (this.timeoutMs > 0) {
+        totalTimer = setTimeout(() => {
+          const err = new Error('请求总耗时超时');
+          if (activeReq && typeof activeReq.destroy === 'function') {
+            try { activeReq.destroy(err); } catch (_) { /* ignore */ }
+          }
+          done(reject, err);
+        }, this.timeoutMs * 2);
+        if (totalTimer.unref) totalTimer.unref();
+      }
+      tunnel.on('connect', (res, socket, head) => {
+        if (typeof tunnel.setTimeout === 'function') tunnel.setTimeout(0);
         if (res.statusCode !== 200) {
           socket.destroy();
-          return reject(new Error(`代理 CONNECT 失败: HTTP ${res.statusCode}`));
+          return done(reject, new Error(`代理 CONNECT 失败: HTTP ${res.statusCode}`));
         }
         if (this.signal && this.signal.aborted) {
           socket.destroy();
-          return reject(new Error('已取消'));
+          return done(reject, new Error('已取消'));
         }
+        if (head && head.length) socket.unshift(head);
         const req = https.request({
           hostname: u.hostname,
           path: u.pathname + u.search,
@@ -227,13 +265,14 @@ class Fetcher {
           agent: false,
           timeout: this.timeoutMs,
           signal: this.signal || undefined,
-        }, (r) => this._consume(r).then(resolve, reject));
+        }, (r) => this._consume(r).then((v) => done(resolve, v), (e) => done(reject, e)));
+        activeReq = req;
         req.on('timeout', () => req.destroy(new Error('连接超时')));
-        req.on('error', reject);
+        req.on('error', (e) => done(reject, e));
         req.end();
       });
       tunnel.on('timeout', () => tunnel.destroy(new Error('代理连接超时')));
-      tunnel.on('error', reject);
+      tunnel.on('error', (e) => done(reject, e));
       tunnel.end();
     });
   }

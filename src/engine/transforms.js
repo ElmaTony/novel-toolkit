@@ -1,6 +1,8 @@
 'use strict';
 
 // 纯文本变换与检测：输入输出都是 string[]，不依赖 vscode，可独立测试。
+// 与 chapters.js 存在双向按需依赖（cool18/parse ← chapters → transforms），通过懒加载避免循环引用。
+const getChapters = () => require('./chapters');
 
 const WS_RE = /^\s+/;
 const WORDISH_RE = /[\w\u4e00-\u9fff\u3400-\u4dbf]/;
@@ -100,13 +102,39 @@ function quoteIssues(line) {
   return problems;
 }
 
+function findLineSpaceIssues(text, isChap) {
+  const s = String(text || '');
+  const out = [];
+  const headMatch = isChap ? s.match(CHAPTER_HEAD_PREFIX_RE) : null;
+  const headEnd = headMatch ? headMatch[0].length : -1;
+  let skippedCustomSep = false;
+  for (const ms of s.matchAll(MID_SPACE_RE)) {
+    const spacePos = ms.index + 1;
+    if (isChap) {
+      if (headEnd >= 0 && spacePos <= headEnd && ms[1] === ' ') continue;
+      if (headEnd < 0 && !skippedCustomSep && ms[1] === ' ') { skippedCustomSep = true; continue; }
+    }
+    out.push({ col: spacePos, len: ms[1].length, desc: '正文汉字之间有空格' });
+  }
+  const ts = s.match(TRAIL_SPACE_RE);
+  if (ts) {
+    out.push({ col: ts.index, len: ts[0].length, desc: '行尾有空格' });
+  }
+  return out;
+}
+
+function firstSpaceIssueRange(text, isChap) {
+  const issues = findLineSpaceIssues(text, isChap);
+  return issues.length ? { startCol: issues[0].col, endCol: issues[0].col + issues[0].len } : null;
+}
+
 // 贴左检查 + 标点短行检查 + 引号配对检查
 function scanLines(lines, opts) {
   const o = Object.assign(
-    { ignoreBlankLines: true, shortLineCheck: true, shortLineMaxChars: 2, quotePairCheck: true, chapterPattern: undefined },
+    { ignoreBlankLines: true, shortLineCheck: true, shortLineMaxChars: 2, quotePairCheck: true, chapterPattern: undefined, chapterLines: null },
     opts
   );
-  const chapterSet = new Set(require('./chapters').chapterLines(lines, o.chapterPattern));
+  const chapterSet = new Set(Array.isArray(o.chapterLines) ? o.chapterLines : getChapters().chapterLines(lines, o.chapterPattern));
   const ws = [];
   const short = [];
   const quote = [];
@@ -129,21 +157,8 @@ function scanLines(lines, opts) {
     }
     if (!blank) {
       // 正文内空格: 汉字间半角空格 / 行尾空格（章节标题行豁免章节标记后的分隔空格）
-      const isChap = chapterSet.has(i);
-      const headMatch = isChap ? text.match(CHAPTER_HEAD_PREFIX_RE) : null;
-      const headEnd = headMatch ? headMatch[0].length : -1;
-      let skippedCustomSep = false;
-      for (const ms of text.matchAll(MID_SPACE_RE)) {
-        const spacePos = ms.index + 1;
-        if (isChap) {
-          if (headEnd >= 0 && spacePos <= headEnd && ms[1] === ' ') continue;
-          if (headEnd < 0 && !skippedCustomSep && ms[1] === ' ') { skippedCustomSep = true; continue; }
-        }
-        mid.push({ line: i, col: spacePos, len: ms[1].length, desc: '正文汉字之间有空格' });
-      }
-      const ts = text.match(TRAIL_SPACE_RE);
-      if (ts) {
-        mid.push({ line: i, col: ts.index, len: ts[0].length, desc: '行尾有空格' });
+      for (const issue of findLineSpaceIssues(text, chapterSet.has(i))) {
+        mid.push({ line: i, col: issue.col, len: issue.len, desc: issue.desc });
       }
     }
     const m = text.match(WS_RE);
@@ -176,7 +191,7 @@ function mergeLines(lines, opts) {
   }
   const indentUniversal = nonBlank > 0 && indented / nonBlank >= 0.8;
 
-  const chapterSet = new Set(require('./chapters').chapterLines(lines, o.chapterPattern));
+  const chapterSet = new Set(getChapters().chapterLines(lines, o.chapterPattern));
   const out = [];
   let buf = null;
   let merged = 0;
@@ -210,7 +225,7 @@ function mergeLines(lines, opts) {
       if (!piece) {
         continue;
       }
-      const startsIndent = o.indentStartsParagraph && k === 0 && /^\s/.test(raw);
+      const startsIndent = o.indentStartsParagraph && /^\s/.test(k === 0 ? raw : piece);
       let startsNew;
       if (k > 0 || buf === null) {
         startsNew = true;
@@ -269,8 +284,7 @@ function indentLines(lines, opts) {
   );
   let chapterSet = null;
   if (o.skipChapterTitles) {
-    const chapters = require('./chapters');
-    chapterSet = new Set(chapters.chapterLines(lines, o.chapterPattern));
+    chapterSet = new Set(getChapters().chapterLines(lines, o.chapterPattern));
   }
   let added = 0;
   let skipped = 0;
@@ -391,7 +405,7 @@ const ELLIPSIS_DOT_POINTS = Object.assign(Object.create(null), {
 });
 const ELLIPSIS_CHAR_RE = /[…⋯⋮‥•·・.．。｡]/;
 const ELLIPSIS_PERIOD_CHARS = new Set(['.', '．', '。', '｡']);
-const CJKISH_RE = /[\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff]/;
+const CJKISH_RE = /[\u3400-\u9fff\uf900-\ufaff\u3040-\u30ffA-Za-z0-9０-９]/;
 
 function normalizeEllipsis(lines) {
   const out = new Array(lines.length);
@@ -524,6 +538,7 @@ module.exports = {
   isShortPunctLine,
   quoteIssues,
   describeLeading,
+  firstSpaceIssueRange,
   scanLines,
   mergeLines,
   splitInlineBreaks,

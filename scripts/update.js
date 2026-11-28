@@ -12,11 +12,28 @@ function runCli(name, args, options = {}) {
     const located = spawnSync('where.exe', [name + '.cmd'], { encoding: 'utf8', windowsHide: true });
     if (located.status !== 0) throw new Error('找不到 ' + name + ' 命令');
     const bin = located.stdout.trim().split(/\r?\n/)[0];
-    if (name === 'npx') { command = process.execPath; argv = [path.join(path.dirname(bin), 'node_modules/npm/bin/npx-cli.js'), ...args]; }
-    else {
+    if (name === 'npx') {
+      const defaultCli = path.join(path.dirname(bin), 'node_modules/npm/bin/npx-cli.js');
+      if (typeof fs.existsSync !== 'function' || fs.existsSync(defaultCli)) {
+        command = process.execPath;
+        argv = [defaultCli, ...args];
+      } else {
+        const wrapper = fs.readFileSync(bin, 'utf8');
+        const cliMatch = wrapper.match(/"%~dp0([^"]*npx-cli\.js)"/i);
+        if (cliMatch) {
+          command = process.execPath;
+          argv = [path.resolve(path.dirname(bin), cliMatch[1]), ...args];
+        } else {
+          command = bin;
+          argv = args;
+          options = { shell: true, ...options };
+        }
+      }
+    } else {
       const root = path.resolve(path.dirname(bin), '..');
-      command = path.join(root, 'Code.exe');
       const wrapper = fs.readFileSync(bin, 'utf8');
+      const exeMatch = wrapper.match(/"%~dp0([^"]*\.exe)"/i);
+      command = exeMatch ? path.resolve(path.dirname(bin), exeMatch[1]) : path.join(root, 'Code.exe');
       const location = wrapper.match(/"%~dp0([^"]*cli\.js)"/i);
       if (!location) throw new Error('无法定位 VS Code CLI');
       argv = [path.resolve(path.dirname(bin), location[1]), ...args];

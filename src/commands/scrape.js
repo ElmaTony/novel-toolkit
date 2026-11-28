@@ -54,7 +54,7 @@ async function offerSetCookie() {
   if (pick === '设置 Cookie') vscode.commands.executeCommand('novelToolkit.pixivSetCookie');
 }
 
-async function runPixiv(scrape, targets, title) {
+async function runPixiv(scrape, targets, title, opts = {}) {
   if (!targets.length) {
     vscode.window.showInformationMessage('没有识别到 Pixiv 小说/系列/作者链接或 ID');
     return;
@@ -67,7 +67,7 @@ async function runPixiv(scrape, targets, title) {
       const r = await scrape.executePixiv(targets, {
         report: (t) => progress.report({ message: t }),
         finish: (res, m) => { result = res; msg = m; },
-      }, token);
+      }, token, { force: !!opts.force });
       if (r && typeof r.msg === 'string') {
         msg = r.msg;
       } else if (r) {
@@ -168,7 +168,7 @@ function registerScrapeCommands({ reg, panel, scrape }) {
     await runPixiv(scrape, parsePixivInput(text), 'Pixiv 抓取（本文件批量）');
   });
 
-  reg('pixivGrabUser', async () => {
+  reg('pixivGrabUser', async (opts) => {
     const input = await vscode.window.showInputBox({
       prompt: '输入作者主页链接（pixiv.net/users/数字）或作者 ID',
       ignoreFocusOut: true,
@@ -181,7 +181,7 @@ function registerScrapeCommands({ reg, panel, scrape }) {
     if (!targets.length) {
       return vscode.window.showInformationMessage('没有识别到 Pixiv 作者主页链接或作者 ID');
     }
-    await runPixiv(scrape, targets, 'Pixiv 抓取（作者全量）');
+    await runPixiv(scrape, targets, 'Pixiv 抓取（作者全量）', opts);
   });
 
   reg('pixivUpdate', async () => {

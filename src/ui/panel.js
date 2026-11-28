@@ -142,7 +142,11 @@ class PanelManager {
       return; // 未定义的消息一律忽略（协议见 ./messages）
     }
     if (msg.command === 'run' && RUNNABLE.includes(msg.name)) {
-      vscode.commands.executeCommand('novelToolkit.' + msg.name);
+      if (msg.name === 'pixivGrabUser') {
+        vscode.commands.executeCommand('novelToolkit.pixivGrabUser', { force: !!msg.force });
+      } else {
+        vscode.commands.executeCommand('novelToolkit.' + msg.name);
+      }
       return;
     }
     if (msg.command === 'refresh') {
@@ -348,11 +352,13 @@ class PanelManager {
     let silencedFlag = false;
     if (this.checker.appliesTo(doc)) {
       const c = this.checker.counts(doc.uri);
-      wsCount = c.ws;
-      midCount = c.mid;
-      shortCount = c.short;
-      quoteCount = c.quote;
-      silencedFlag = c.silenced;
+      silencedFlag = !!c.silenced;
+      if (c.ready !== false) {
+        wsCount = c.ws;
+        midCount = c.mid;
+        shortCount = c.short;
+        quoteCount = c.quote;
+      }
     }
     this.post({
       type: 'update',

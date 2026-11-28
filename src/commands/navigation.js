@@ -2,7 +2,7 @@
 
 // 检查与跳转命令：全文检查、空白/短行/引号/章节跳转、章节列表
 const vscode = require('vscode');
-const { jumpToLine, noDoc } = require('../core/editor');
+const { jumpToLine, jumpToRange, noDoc } = require('../core/editor');
 
 function registerNavigationCommands({ reg, panel, checker }) {
   reg('check', async () => {
@@ -21,8 +21,12 @@ function registerNavigationCommands({ reg, panel, checker }) {
       return vscode.window.showInformationMessage('已扫描全文：没有空白、标点短行与引号配对问题 ✓');
     }
     if (r.ws.length > 0 || r.mid.length > 0) {
-      const blankLines = [...new Set([...r.ws, ...r.mid])].sort((a, b) => a - b);
-      jumpToLine(editor, blankLines, blankLines[0]);
+      if (r.ranges && Array.isArray(r.ranges.blank) && r.ranges.blank.length > 0) {
+        jumpToRange(editor, r.ranges.blank[0], 0, r.ranges.blank.length, '空白');
+      } else {
+        const blankLines = [...new Set([...r.ws, ...r.mid])].sort((a, b) => a - b);
+        jumpToLine(editor, blankLines, blankLines[0], '空白');
+      }
     } else if (r.quote.length > 0) {
       jumpToLine(editor, r.quote, r.quote[0], '引号配对');
     } else {
@@ -45,6 +49,37 @@ function registerNavigationCommands({ reg, panel, checker }) {
       return;
     }
     const keyList = Array.isArray(keys) ? keys : [keys];
+    const rangeKey = keyList.includes('ws') || keyList.includes('mid') ? 'blank' : keyList[0];
+    const rangeList = r.ranges && Array.isArray(r.ranges[rangeKey]) ? r.ranges[rangeKey] : null;
+    if (rangeList && rangeList.length === 0) {
+      vscode.window.setStatusBarMessage(emptyMsg, 4000);
+      return;
+    }
+    if (rangeList && rangeList.length > 0) {
+      const sel = editor.selection;
+      const selStart = sel.start || sel.active;
+      const selEnd = sel.end || sel.active;
+      let targetIdx;
+      if (backwards) {
+        for (let i = 0; i < rangeList.length; i++) {
+          const item = rangeList[i];
+          if (item.line < selStart.line || (item.line === selStart.line && item.endCol <= selStart.character)) {
+            targetIdx = i;
+          }
+        }
+        if (targetIdx === undefined) targetIdx = rangeList.length - 1;
+      } else {
+        targetIdx = rangeList.findIndex((item) =>
+          item.line > selEnd.line || (item.line === selEnd.line && item.startCol >= selEnd.character));
+        if (targetIdx < 0) targetIdx = 0;
+      }
+      const range = rangeList[targetIdx];
+      if (editor.document.isClosed || !range || range.line < 0 || range.line >= editor.document.lineCount) {
+        return;
+      }
+      jumpToRange(editor, range, targetIdx, rangeList.length, label);
+      return;
+    }
     const lines = [...new Set([].concat(...keyList.map((k) => r[k] || [])))].sort((a, b) => a - b);
     if (lines.length === 0) {
       vscode.window.setStatusBarMessage(emptyMsg, 4000);

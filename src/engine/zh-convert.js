@@ -99,15 +99,25 @@ for (const [t, s] of _PHRASE_MAP) {
   if (!_BUCKETS.has(head)) { _BUCKETS.set(head, []); }
   _BUCKETS.get(head).push([t, s]);
 }
-// 输出词形同样受保护，避免再次运行时破坏专名。
-for (const [source, output] of _PHRASE_MAP) {
-  if (source === output || output.length < 2) continue;
-  const bucket = _BUCKETS.get(output[0]) || [];
-  if (!bucket.some(([key]) => key === output)) bucket.push([output, output]);
-  _BUCKETS.set(output[0], bucket);
-}
 for (const bucket of _BUCKETS.values()) {
   bucket.sort((a, b) => b[0].length - a[0].length);
+}
+// 仅当输出词形再次运行 _convert 会被破坏时，才补入二次保护词条（避免纯简体词污染“词组保护”清单）。
+const _DIRTY_BUCKETS = new Set();
+for (const [source, output] of _PHRASE_MAP) {
+  if (source === output || [...output].length < 2) continue;
+  if (_convert(output, false).result !== output) {
+    const head = output[0];
+    const bucket = _BUCKETS.get(head) || [];
+    if (!bucket.some(([key]) => key === output)) {
+      bucket.push([output, output]);
+      _BUCKETS.set(head, bucket);
+      _DIRTY_BUCKETS.add(head);
+    }
+  }
+}
+for (const head of _DIRTY_BUCKETS) {
+  _BUCKETS.get(head).sort((a, b) => b[0].length - a[0].length);
 }
 
 function _convert(text, collect) {

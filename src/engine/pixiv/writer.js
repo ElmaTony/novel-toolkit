@@ -4,10 +4,11 @@ const path = require('path');
 const ILLEGAL = { '\\': '＼', '/': '／', ':': '：', '*': '＊', '?': '？', '"': '＂', '<': '＜', '>': '＞', '|': '｜' };
 function sanitizeName(name, maxLen = 80) {
   let s = String(name || '').replace(/[\\/:*?"<>|]/g, c => ILLEGAL[c]).replace(/[\x00-\x1f]/g, '').replace(/\s+/g, ' ').trim().replace(/[. ]+$/g, '');
-  if (/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$/i.test(s)) s = '_' + s;
   s = s.slice(0, maxLen);
   if (/[\uD800-\uDBFF]$/.test(s)) s = s.slice(0, -1);
-  return s.replace(/[. ]+$/g, '') || '无标题';
+  s = s.replace(/[. ]+$/g, '');
+  if (/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$/i.test(s)) s = '_' + s;
+  return s || '无标题';
 }
 const toCRLF = text => String(text).replace(/\r?\n/g, '\r\n');
 const crypto = require('crypto');

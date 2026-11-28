@@ -172,11 +172,11 @@ function numToCn(num) {
   return res;
 }
 
-// 第N+单位（第123章 / 第 12 章 / 第４５卷…）。只取行内第一处 = 章节标记本身；
-// 且 unifyChapterNumbers 只处理已通过章节正则识别的行，正文里的"第3次"碰不到
-const CH_ARABIC_RE = /(第\s*)([0-9０-９]+)(?=\s*[章节卷回部集话])/;
-// 行首"卷N"样式（卷123 / 【卷1】 / （卷2））
+// 第N+单位（第123章 / 第 12 章 / 第４５卷…）。
+// 行首"卷N"样式（卷123 / 【卷1】 / （卷2）），支持同一行“第1卷 第12章”与“【卷1】 第12章”双前缀一次转完
+const CH_ARABIC_AT_HEAD_RE = /^(\s*(?:[\[【（(]\s*)?)(第\s*)([0-9０-９]+)\s*(?=[章节卷回部集话])/;
 const VOL_ARABIC_RE = /^(\s*(?:[\[【（(]\s*)?卷)([0-9０-９]+)/;
+const AFTER_VOL_CH_RE = /^(\s*(?:[\]】）)]?\s+))(第\s*)([0-9０-９]+)\s*(?=[章节回部集话])/;
 
 function fwToInt(s) {
   let v = 0;
@@ -188,7 +188,7 @@ function fwToInt(s) {
   return v;
 }
 
-// 只改"已识别为章节名"的行: 第123章→第一百二十三章, 卷99→卷九十九; 正文行与其他数字一律不动
+// 只改"已识别为章节名"的行头部标记: 第123章→第一百二十三章, 卷99→卷九十九, 第1卷 第12章→第一卷 第十二章; 正文数字不动
 function unifyChapterNumbers(lines, pattern) {
   const chapterSet = new Set(chapterEntries(lines, pattern).map((e) => e.line));
   const out = lines.slice();
@@ -196,25 +196,48 @@ function unifyChapterNumbers(lines, pattern) {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (!/[0-9０-９]/.test(line) || !chapterSet.has(i)) { continue; }
-    let m = line.match(CH_ARABIC_RE);
-    let from;
-    let to;
+    let cur = line;
+    let prefixEnd = -1;
+    let m = cur.match(VOL_ARABIC_RE);
     if (m) {
       const cn = numToCn(fwToInt(m[2]));
-      if (!cn) { continue; }
-      from = m[0];
-      to = '第' + cn;
-      out[i] = line.slice(0, m.index) + to + line.slice(m.index + m[0].length);
-    } else if ((m = line.match(VOL_ARABIC_RE))) {
-      const cn = numToCn(fwToInt(m[2]));
-      if (!cn) { continue; }
-      from = '卷' + m[2];
-      to = '卷' + cn;
-      out[i] = m[1] + cn + line.slice(m.index + m[0].length);
-    } else {
-      continue;
+      if (cn) {
+        const from = '卷' + m[2];
+        const to = '卷' + cn;
+        cur = m[1] + cn + cur.slice(m[0].length);
+        prefixEnd = m[1].length + cn.length;
+        changed.push({ line: i, from, to });
+      }
+    } else if ((m = cur.match(CH_ARABIC_AT_HEAD_RE))) {
+      const cn = numToCn(fwToInt(m[3]));
+      if (cn) {
+        const from = m[2] + m[3];
+        const to = '第' + cn;
+        cur = m[1] + to + cur.slice(m[0].length);
+        prefixEnd = m[1].length + to.length;
+        changed.push({ line: i, from, to });
+        const unitMatch = cur.slice(prefixEnd).match(/^\s*[卷]/);
+        if (unitMatch) {
+          prefixEnd += unitMatch[0].length;
+        } else {
+          prefixEnd = -1;
+        }
+      }
     }
-    changed.push({ line: i, from, to });
+    if (prefixEnd >= 0) {
+      const rest = cur.slice(prefixEnd);
+      const m2 = rest.match(AFTER_VOL_CH_RE);
+      if (m2) {
+        const cn2 = numToCn(fwToInt(m2[3]));
+        if (cn2) {
+          const from2 = m2[2] + m2[3];
+          const to2 = '第' + cn2;
+          cur = cur.slice(0, prefixEnd) + m2[1] + to2 + rest.slice(m2[0].length);
+          changed.push({ line: i, from: from2, to: to2 });
+        }
+      }
+    }
+    if (cur !== line) out[i] = cur;
   }
   return { lines: out, changed };
 }

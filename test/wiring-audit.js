@@ -1,20 +1,31 @@
 'use strict';
-// 接线完整性审计: 命令注册 ↔ package.json 声明 ↔ 快捷键 ↔ 设置项 ↔ RUNNABLE 白名单
+// 接线完整性审计: 命令注册 ↔ package.json 声明 ↔ 快捷键 ↔ 设置项 ↔ RUNNABLE/HOST_COMMANDS/PUSH_TYPES 白名单
 // 修复任何接线/新增功能后必跑: node test/wiring-audit.js（退出码 0 = 全通）
 const fs = require('fs');
+const path = require('path');
 const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+
+function walkJs(dir) {
+  const out = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...walkJs(full));
+    else if (entry.name.endsWith('.js')) out.push(full);
+  }
+  return out;
+}
+
 const commandFiles = fs.readdirSync('src/commands')
   .filter((f) => f.endsWith('.js'))
-  .map((f) => 'src/commands/' + f);
+  .map((f) => path.join('src/commands', f));
 const extSrc = [fs.readFileSync('extension.js', 'utf8')]
   .concat(commandFiles.map((f) => fs.readFileSync(f, 'utf8')))
   .join('\n');
 const panelSrc = fs.readFileSync('src/ui/panel.js', 'utf8');
+const webviewSrc = fs.readFileSync('src/ui/panel-webview.js', 'utf8');
 const msgSrc = fs.readFileSync('src/ui/messages.js', 'utf8');
-const engineSrc = ['src/engine/transforms.js', 'src/engine/chapters.js', 'src/engine/cool18/parse.js', 'src/engine/cool18/core.js']
-  .map((f) => fs.readFileSync(f, 'utf8')).join('\n');
-const serviceSrc = fs.readFileSync('src/service/scrape.js', 'utf8') + fs.readFileSync('src/service/checker.js', 'utf8');
-const uiSrc = panelSrc;
+const allSources = [fs.readFileSync('extension.js', 'utf8')]
+  .concat(walkJs('src').sort().map((f) => fs.readFileSync(f, 'utf8')));
 
 let issues = 0;
 const regged = new Set([...extSrc.matchAll(/reg\('([^']+)'/g)].map((m) => m[1]));
@@ -34,16 +45,19 @@ for (const k of (pkg.contributes.keybindings || [])) {
   const id = k.command.replace('novelToolkit.', '');
   if (!regged.has(id)) { console.log('✗ 快捷键指向未注册命令: ' + k.key + ' → ' + k.command); issues++; }
 }
-// 4) 代码读取的 novelToolkit 设置项必须在 package.json 声明
+// 4) 代码读取的 novelToolkit 设置项必须在 package.json 声明，且已声明项均有代码读取
 //    （globalState 键不在 settings 里, 显式排除）
 const cfgUsed = new Set();
-for (const src of [extSrc, engineSrc, serviceSrc, uiSrc]) {
+for (const src of allSources) {
   // 只匹配 novelToolkit 配置对象及其局部别名；旧配置/私密存储不混入。
   for (const match of src.matchAll(/(?:\bc|\bcfg\(\)|\bCFG\(\)|this\.cfg\(\)|vscode\.workspace\.getConfiguration\('novelToolkit'\))\.(?:get|inspect)\(['"]([a-zA-Z0-9]+)['"]/g)) cfgUsed.add(match[1]);
 }
 const cfgDeclared = new Set(Object.keys(pkg.contributes.configuration.properties).map((k) => k.replace('novelToolkit.', '')));
 for (const c of cfgUsed) {
   if (!cfgDeclared.has(c)) { console.log('✗ 代码读取了未声明的设置: novelToolkit.' + c); issues++; }
+}
+for (const c of cfgDeclared) {
+  if (!cfgUsed.has(c)) { console.log('✗ 设置项已声明但未被读取: novelToolkit.' + c); issues++; }
 }
 // 5) RUNNABLE 白名单必须全部已注册（先包括号再清理尾逗号）
 const clean = (block) => JSON.parse(('[' + block.replace(/'/g, '"') + ']').replace(/,(\s*\])/g, '$1'));
@@ -58,10 +72,24 @@ for (const c of hostCmds) {
     console.log('✗ HOST_COMMANDS 未被面板控制器处理: ' + c); issues++;
   }
 }
+// 7) PUSH_TYPES 必须与 panel.js 推送及 panel-webview.js 监听双向对齐
+const pushTypes = clean(msgSrc.match(/PUSH_TYPES: \[([\s\S]*?)\]/)[1]);
+const pushedByHost = new Set([...panelSrc.matchAll(/post(?:Message)?\(\{\s*type:\s*'([^']+)'/g)].map((m) => m[1]));
+const handledByView = new Set([...webviewSrc.matchAll(/message\.type === '([^']+)'/g)].map((m) => m[1]));
+for (const p of pushTypes) {
+  if (!pushedByHost.has(p)) { console.log('✗ PUSH_TYPES 未在 panel.js 中推送: ' + p); issues++; }
+  if (!handledByView.has(p)) { console.log('✗ PUSH_TYPES 未在 panel-webview.js 中监听: ' + p); issues++; }
+}
+for (const p of pushedByHost) {
+  if (!pushTypes.includes(p)) { console.log('✗ panel.js 推送了未声明的 type: ' + p); issues++; }
+}
+for (const p of handledByView) {
+  if (!pushTypes.includes(p)) { console.log('✗ panel-webview.js 监听了未声明的 type: ' + p); issues++; }
+}
 
 console.log('已审计设置读取: ' + cfgUsed.size);
 console.log('命令注册: ' + regged.size + ' | 设置项声明: ' + cfgDeclared.size +
   ' | 快捷键: ' + (pkg.contributes.keybindings || []).length +
-  ' | RUNNABLE: ' + msgRun.length + ' | HOST_COMMANDS: ' + hostCmds.length);
+  ' | RUNNABLE: ' + msgRun.length + ' | HOST_COMMANDS: ' + hostCmds.length + ' | PUSH_TYPES: ' + pushTypes.length);
 console.log(issues === 0 ? '接线完整性: ✓ 全部通过' : '接线完整性: ✗ ' + issues + ' 个问题');
 process.exit(issues ? 1 : 0);
